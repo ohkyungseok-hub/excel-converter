@@ -34,8 +34,21 @@ def index_to_excel_col(n: int) -> str:
 def excel_letters(max_cols=104):
     return [index_to_excel_col(i) for i in range(max_cols)]
 
-def read_first_sheet(file) -> pd.DataFrame:
+def read_first_sheet_template(file) -> pd.DataFrame:
+    """템플릿(2.xlsx)은 일반적으로 읽기"""
     return pd.read_excel(file, sheet_name=0, header=0, engine="openpyxl")
+
+def read_first_sheet_source_as_text(file) -> pd.DataFrame:
+    """소스(1.xlsx)는 전 컬럼을 문자열로 읽어 전화번호 앞 0 보존"""
+    # keep_default_na=False: 빈 셀을 NaN이 아닌 빈 문자열로 유지 (전화번호 'nan' 문자열화 방지)
+    return pd.read_excel(
+        file,
+        sheet_name=0,
+        header=0,
+        engine="openpyxl",
+        dtype=str,
+        keep_default_na=False,
+    )
 
 def ensure_mapping_initialized(template_columns, default_mapping):
     m = st.session_state.get("mapping")
@@ -93,7 +106,7 @@ if use_uploaded_template:
     tpl_file = st.file_uploader("2와 같은 템플릿 파일 업로드 (예: 2.xlsx)", type=["xlsx"], key="tpl")
     if tpl_file:
         try:
-            tpl_df = read_first_sheet(tpl_file)
+            tpl_df = read_first_sheet_template(tpl_file)
             st.success(f"템플릿 업로드 완료. 컬럼 수: {len(tpl_df.columns)}")
         except Exception as e:
             st.warning(f"템플릿 파일을 읽는 중 오류가 발생했습니다: {e}")
@@ -134,9 +147,12 @@ with st.form("mapping_form"):
         if default_val not in letters:
             default_val = ""
         options = [""] + letters
-        sel = st.selectbox(f"{col} ⟶ 1.xlsx 열 문자 선택", options=options,
-                           index=(options.index(default_val) if default_val in options else 0),
-                           key=f"map_{col}")
+        sel = st.selectbox(
+            f"{col} ⟶ 1.xlsx 열 문자 선택",
+            options=options,
+            index=(options.index(default_val) if default_val in options else 0),
+            key=f"map_{col}",
+        )
         edited_mapping[col] = sel
     if st.form_submit_button("매핑 저장"):
         st.session_state["mapping"] = {k: v for k, v in edited_mapping.items() if v}
@@ -163,7 +179,8 @@ if run:
         st.error("유효한 템플릿이 필요합니다.")
     else:
         try:
-            df_src = read_first_sheet(src_file)
+            # ✅ 전화번호 0 보존: 소스는 무조건 문자열로 읽음
+            df_src = read_first_sheet_source_as_text(src_file)
         except Exception as e:
             st.exception(RuntimeError(f"소스 파일을 읽는 중 오류가 발생했습니다: {e}"))
         else:
@@ -192,16 +209,22 @@ if run:
                     for tpl_header, src_colname in resolved_map.items():
                         try:
                             if tpl_header == "수량":
+                                # 수량만 숫자로 변환
                                 result[tpl_header] = pd.to_numeric(df_src[src_colname], errors="coerce")
+                            elif tpl_header == "받는분 전화번호":
+                                # 전화번호는 항상 문자열(앞 0 보존). 빈값/NaN은 빈 문자열 처리
+                                series = df_src[src_colname].astype(str)
+                                # pandas가 공백/NaN을 'nan'으로 캐스팅한 경우 제거
+                                result[tpl_header] = series.where(series.str.lower() != "nan", "")
                             else:
                                 result[tpl_header] = df_src[src_colname]
                         except KeyError:
                             st.warning(f"소스 컬럼 '{src_colname}'(매핑: {tpl_header})을(를) 찾을 수 없습니다. 해당 필드는 비워집니다.")
 
-                    # 템플릿 숫자형 샘플이 있으면 타입 정렬
+                    # 템플릿의 숫자형 샘플이 있으면 타입 정렬(선택)
                     for col in template_columns:
                         if col in tpl_df.columns and tpl_df[col].notna().any():
-                            if pd.api.types.is_numeric_dtype(tpl_df[col]):
+                            if pd.api.types.is_numeric_dtype(tpl_df[col]) and col != "받는분 전화번호":
                                 result[col] = pd.to_numeric(result[col], errors="coerce")
 
                     st.success(f"변환 완료: 총 {len(result)}행")
@@ -217,3 +240,6 @@ if run:
                         file_name="output.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     )
+
+st.markdown("---")
+st.caption("전화번호/주소 정규화, 고정값 채우기, 열 머리글 기반 매핑 등도 원하시면 바로 추가해 드릴게요.")
