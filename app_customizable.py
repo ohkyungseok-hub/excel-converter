@@ -11,7 +11,7 @@ import streamlit as st
 st.set_page_config(page_title="엑셀 양식 변환기 (1→2)", layout="centered")
 
 st.title("엑셀 양식 변환기 (1 → 2)")
-st.caption("템플릿 업로드 없이도 기본 템플릿으로 변환하고, 화면에서 매핑 규칙을 자유롭게 수정할 수 있습니다.\n아래에는 쿠팡 양식 전환 섹션도 추가되어 있습니다.")
+st.caption("라오라 / 쿠팡 / 스마트스토어(자동 매핑, 고정 매핑) 형식을 2번 템플릿으로 변환합니다. (전화번호 0 보존)")
 
 # -------------------------- Helpers --------------------------
 def excel_col_to_index(col_letters: str) -> int:
@@ -39,14 +39,14 @@ def read_first_sheet_template(file) -> pd.DataFrame:
     return pd.read_excel(file, sheet_name=0, header=0, engine="openpyxl")
 
 def read_first_sheet_source_as_text(file) -> pd.DataFrame:
-    """소스(1.xlsx/쿠팡)는 전 컬럼을 문자열로 읽어 전화번호 앞 0 보존"""
+    """소스는 전 컬럼을 문자열로 읽어 전화번호 앞 0 보존"""
     return pd.read_excel(
         file,
         sheet_name=0,
         header=0,
         engine="openpyxl",
         dtype=str,
-        keep_default_na=False,  # 빈값은 'nan' 문자열화 방지
+        keep_default_na=False,  # 빈값을 NaN 대신 빈 문자열로 유지
     )
 
 def ensure_mapping_initialized(template_columns, default_mapping):
@@ -60,6 +60,22 @@ def ensure_mapping_initialized(template_columns, default_mapping):
     st.session_state["mapping"] = synced
     return st.session_state["mapping"]
 
+def normalize(s: str) -> str:
+    """헤더명 유사 매칭용: 소문자, 공백/특수문자 제거"""
+    if s is None:
+        return ""
+    return re.sub(r"[\s\-\_\(\)\[\]\/\\\.]+", "", str(s).strip().lower())
+
+def find_first_match(df_cols, keywords):
+    """df 컬럼들 중 keywords(리스트)의 어느 하나라도 포함되는 첫 컬럼을 반환"""
+    norm_map = {c: normalize(c) for c in df_cols}
+    keys = [normalize(k) for k in keywords]
+    for col, ncol in norm_map.items():
+        for key in keys:
+            if key and key in ncol:
+                return col
+    return None
+
 # -------------------- Defaults --------------------
 DEFAULT_TEMPLATE_COLUMNS = [
     "주문번호",
@@ -71,7 +87,7 @@ DEFAULT_TEMPLATE_COLUMNS = [
     "메모",
 ]
 
-# 라오라 기본 매핑 (기존)
+# 라오라 기본 매핑 (열 문자)
 DEFAULT_MAPPING = {
     "주문번호": "D",
     "받는분 이름": "AM",
@@ -82,35 +98,60 @@ DEFAULT_MAPPING = {
     "메모": "AR",
 }
 
-# 쿠팡 고정 매핑 (요청하신 규칙)
-# - 소스(쿠팡) 열 → 템플릿 헤더
+# 쿠팡 고정 매핑 (열 문자) — 주문번호 C 로 수정 반영
 COUPANG_MAPPING = {
-    "주문번호": "C",   # 쿠팡의 A열 주문번호 → 템플릿 '주문번호'
-    "받는분 이름": "AA",  # 쿠팡 AA열 수취인 이름 → 템플릿 '받는분 이름'
-    "받는분 주소": "AD",  # 쿠팡 AD열 수취인 주소 → 템플릿 '받는분 주소'
-    "받는분 전화번호": "AB",  # 쿠팡 AB열 수취인 전화번호 → 템플릿 '받는분 전화번호'
-    "상품명": "P",     # 쿠팡 P열 최초등록상품명/옵션명 → 템플릿 '상품명'
-    "수량": "W",       # 쿠팡 W열 구매수 → 템플릿 '수량'
-    "메모": "AE",      # 쿠팡 AE열 배송메시지 → 템플릿 '메모'
+    "주문번호": "C",
+    "받는분 이름": "AA",
+    "받는분 주소": "AD",
+    "받는분 전화번호": "AB",
+    "상품명": "P",
+    "수량": "W",
+    "메모": "AE",
+}
+
+# 스마트스토어 자동 매핑용 후보 키워드(헤더 기반)
+SMARTSTORE_CANDIDATES = {
+    "주문번호": ["주문번호", "주문 no", "order id"],
+    "받는분 이름": ["수취인", "수취인명", "받는분", "수령자", "수령자명"],
+    "받는분 주소": ["배송지주소", "수취인주소", "주소"],
+    "받는분 주소(상세)": ["배송지상세주소", "상세주소", "나머지주소", "주소2"],
+    "받는분 전화번호": ["수취인연락처", "수취인휴대폰", "수취인전화", "수취인전화번호", "휴대전화", "핸드폰"],
+    "상품명": ["상품명", "상품주문명", "상품명(옵션포함)", "최초등록상품명", "주문상품명"],
+    "옵션명": ["옵션명", "옵션정보", "옵션"],
+    "수량": ["수량", "구매수량", "주문수량", "발주수량"],
+    "메모": ["배송메시지", "배송 메모", "주문메모", "요청사항"],
+}
+
+# 스마트스토어 "고정 매핑(열 문자)" — 요청하신 규칙
+# B: 주문번호, L: 수취인명, AP: 통합배송지, AN: 수취인연락처, Q & S: 상품명, U: 수량, AU: 배송메시지
+SMARTSTORE_FIXED_LETTER_MAPPING = {
+    "주문번호": "B",
+    "받는분 이름": "L",
+    "받는분 주소": "AP",
+    "받는분 전화번호": "AN",
+    "상품명_Q": "Q",
+    "상품명_S": "S",
+    "수량": "U",
+    "메모": "AU",
 }
 
 # -------------------------- Sidebar --------------------------
-st.sidebar.header("옵션")
+st.sidebar.header("템플릿 옵션")
 use_uploaded_template = st.sidebar.checkbox("템플릿(2.xlsx) 직접 업로드", value=False)
 max_letter_cols = st.sidebar.slider(
-    "최대 열 범위(Excel 문자)",
+    "라오라용 최대 열 범위(Excel 문자)",
     min_value=52,
     max_value=156,
     value=104,
     step=26,
-    help="드롭다운에 표시할 엑셀 열 문자 개수",
+    help="라오라 매핑 드롭다운의 열 문자 개수",
 )
 st.sidebar.divider()
 st.sidebar.subheader("라오라 매핑 저장/불러오기")
-mapping_upload = st.sidebar.file_uploader("매핑 JSON 불러오기 (라오라용)", type=["json"], key="mapping_json")
+mapping_upload = st.sidebar.file_uploader("매핑 JSON 불러오기 (라오라)", type=["json"], key="mapping_json")
 prepare_download = st.sidebar.button("현재 라오라 매핑 JSON 다운로드 준비")
 
-# -------------------------- 템플릿 업로드 (공용) --------------------------
+# -------------------------- 템플릿 설정 (공용) --------------------------
 st.subheader("템플릿 설정 (2.xlsx)")
 tpl_df = None
 if use_uploaded_template:
@@ -129,17 +170,13 @@ else:
 template_columns = list(tpl_df.columns) if tpl_df is not None else []
 
 # ======================================================================
-# 1) 라오라 파일 변환 (기존 섹션)
+# 1) 라오라 파일 변환 (열 문자 매핑)
 # ======================================================================
 st.markdown("## 라오라 파일 변환")
 
-# 라오라: 매핑 초기화/동기화 및 에디터
 current_mapping = ensure_mapping_initialized(template_columns, DEFAULT_MAPPING)
-
-st.markdown("**라오라 매핑 규칙 편집**")
 letters = excel_letters(max_letter_cols)
 
-# 라오라 매핑 JSON 업로드(사이드바)
 if mapping_upload is not None:
     try:
         loaded = json.load(mapping_upload)
@@ -158,7 +195,6 @@ if mapping_upload is not None:
     except Exception as e:
         st.warning(f"라오라 매핑 JSON 불러오기 실패: {e}")
 
-# 라오라 매핑 에디터
 edited_mapping = {}
 with st.form("mapping_form_laora"):
     for col in template_columns:
@@ -178,7 +214,6 @@ with st.form("mapping_form_laora"):
         current_mapping = st.session_state["mapping"]
         st.success("라오라 매핑을 저장했습니다.")
 
-# 라오라 매핑 JSON 다운로드
 if prepare_download:
     mapping_bytes = json.dumps(current_mapping, ensure_ascii=False, indent=2).encode("utf-8")
     st.download_button(
@@ -188,10 +223,8 @@ if prepare_download:
         mime="application/json",
     )
 
-# 라오라 소스 업로드 + 변환
 st.subheader("라오라 소스 파일 업로드")
 src_file_laora = st.file_uploader("라오라 형식의 파일 업로드 (예: 1.xlsx)", type=["xlsx"], key="src_laora")
-
 run_laora = st.button("라오라 변환 실행")
 if run_laora:
     if not src_file_laora:
@@ -200,13 +233,11 @@ if run_laora:
         st.error("유효한 템플릿이 필요합니다.")
     else:
         try:
-            # 라오라도 전화번호 보존을 위해 문자열로 읽음
             df_src = read_first_sheet_source_as_text(src_file_laora)
         except Exception as e:
             st.exception(RuntimeError(f"라오라 소스 파일을 읽는 중 오류: {e}"))
         else:
             result = pd.DataFrame(index=range(len(df_src)), columns=template_columns)
-
             mapping = st.session_state.get("mapping", {})
             if not isinstance(mapping, dict) or not mapping:
                 st.error("라오라 매핑이 없습니다. 먼저 저장해 주세요.")
@@ -239,7 +270,6 @@ if run_laora:
                         except KeyError:
                             st.warning(f"소스 컬럼 '{src_colname}'(매핑: {tpl_header})을(를) 찾을 수 없습니다. 해당 필드는 비워집니다.")
 
-                    # 템플릿 숫자형 샘플 존재 시 타입 정렬(전화번호 제외)
                     for col in template_columns:
                         if col in tpl_df.columns and tpl_df[col].notna().any():
                             if pd.api.types.is_numeric_dtype(tpl_df[col]) and col != "받는분 전화번호":
@@ -262,17 +292,15 @@ if run_laora:
 st.markdown("---")
 
 # ======================================================================
-# 2) 쿠팡 파일 변환 (새 섹션)
+# 2) 쿠팡 파일 변환 (고정 매핑)
 # ======================================================================
 st.markdown("## 쿠팡 파일 변환")
 
-# 안내: 고정 매핑 표기
 with st.expander("쿠팡 → 템플릿 매핑 보기", expanded=False):
     st.markdown(
         """
         **쿠팡 소스열 → 템플릿 컬럼**  
-   -       - `A` → **주문번호**  
-+       - `C` → **주문번호**  
+        - `C` → **주문번호**  
         - `AA` → **받는분 이름**  
         - `AD` → **받는분 주소**  
         - `AB` → **받는분 전화번호**  
@@ -282,10 +310,8 @@ with st.expander("쿠팡 → 템플릿 매핑 보기", expanded=False):
         """
     )
 
-# 쿠팡 소스 업로드 + 변환(고정 매핑)
 st.subheader("쿠팡 소스 파일 업로드")
 src_file_coupang = st.file_uploader("쿠팡 형식의 파일 업로드 (예: 쿠팡.xlsx)", type=["xlsx"], key="src_coupang")
-
 run_coupang = st.button("쿠팡 변환 실행")
 if run_coupang:
     if not src_file_coupang:
@@ -294,14 +320,11 @@ if run_coupang:
         st.error("유효한 템플릿이 필요합니다.")
     else:
         try:
-            # 쿠팡도 전화번호 보존을 위해 문자열로 읽음
             df_src_cp = read_first_sheet_source_as_text(src_file_coupang)
         except Exception as e:
             st.exception(RuntimeError(f"쿠팡 소스 파일을 읽는 중 오류: {e}"))
         else:
             result_cp = pd.DataFrame(index=range(len(df_src_cp)), columns=template_columns)
-
-            # 고정 매핑 사용
             mapping_cp = COUPANG_MAPPING.copy()
 
             src_cols_by_index_cp = list(df_src_cp.columns)
@@ -330,7 +353,6 @@ if run_coupang:
                     except KeyError:
                         st.warning(f"[쿠팡] 소스 컬럼 '{src_colname}'(매핑: {tpl_header})을(를) 찾을 수 없습니다. 해당 필드는 비워집니다.")
 
-                # 템플릿 숫자형 샘플 존재 시 타입 정렬(전화번호 제외)
                 for col in template_columns:
                     if col in tpl_df.columns and tpl_df[col].notna().any():
                         if pd.api.types.is_numeric_dtype(tpl_df[col]) and col != "받는분 전화번호":
@@ -351,4 +373,304 @@ if run_coupang:
                 )
 
 st.markdown("---")
-st.caption("라오라/쿠팡 외 양식도 추가 가능해요. 원본 열/헤더 예시를 알려주시면 프리셋을 더 넣어 드립니다.")
+
+# ======================================================================
+# 3) 스마트스토어 파일 변환 (헤더명 자동 매핑 + 편집)
+# ======================================================================
+st.markdown("## 스마트스토어 파일 변환 (자동 매핑)")
+
+with st.expander("스마트스토어 자동 매핑 규칙(제안) 보기", expanded=False):
+    st.markdown(
+        """
+        - **주문번호**: `주문번호`, `order id` 등 포함 헤더 자동 탐색  
+        - **받는분 이름**: `수취인`, `받는분`, `수령자` 등  
+        - **받는분 주소**: `배송지주소` + `상세주소` 결합(있다면)  
+        - **받는분 전화번호**: `수취인연락처`, `휴대전화` 등  
+        - **상품명**: `상품명`(+`옵션명`이 있으면 합침: `상품명 / 옵션명`)  
+        - **수량**: `수량`, `구매수량`, `주문수량` 등  
+        - **메모**: `배송메시지`, `주문메모`, `요청사항` 등  
+        ※ 자동 매핑 후에도 아래 드롭다운에서 **헤더명을 직접 수정**할 수 있습니다.
+        """
+    )
+
+st.subheader("스마트스토어 소스 파일 업로드 (자동 매핑)")
+src_file_ss = st.file_uploader("스마트스토어 형식의 파일 업로드 (예: 스마트스토어.xlsx)", type=["xlsx"], key="src_smartstore")
+
+auto_btn = st.button("스마트스토어 자동 매핑 실행")
+if src_file_ss and auto_btn:
+    try:
+        df_ss = read_first_sheet_source_as_text(src_file_ss)
+        st.session_state["df_ss_cols"] = list(df_ss.columns)  # 드롭다운용
+    except Exception as e:
+        st.exception(RuntimeError(f"스마트스토어 소스 파일을 읽는 중 오류: {e}"))
+        df_ss = None
+    else:
+        # 자동 매핑: 템플릿 컬럼 -> 소스 헤더명
+        auto_map = {}
+        # 주문번호
+        col_order = find_first_match(df_ss.columns, SMARTSTORE_CANDIDATES["주문번호"])
+        if col_order: auto_map["주문번호"] = col_order
+        # 받는분 이름
+        col_name = find_first_match(df_ss.columns, SMARTSTORE_CANDIDATES["받는분 이름"])
+        if col_name: auto_map["받는분 이름"] = col_name
+        # 주소(기본/상세)
+        col_addr1 = find_first_match(df_ss.columns, SMARTSTORE_CANDIDATES["받는분 주소"])
+        col_addr2 = find_first_match(df_ss.columns, SMARTSTORE_CANDIDATES["받는분 주소(상세)"])
+        # 받는분 전화번호
+        col_phone = find_first_match(df_ss.columns, SMARTSTORE_CANDIDATES["받는분 전화번호"])
+        if col_phone: auto_map["받는분 전화번호"] = col_phone
+        # 상품명(+옵션)
+        col_prod = find_first_match(df_ss.columns, SMARTSTORE_CANDIDATES["상품명"])
+        col_opt  = find_first_match(df_ss.columns, SMARTSTORE_CANDIDATES["옵션명"])
+        if col_prod: auto_map["상품명"] = col_prod
+        if col_opt:  auto_map["_옵션명"] = col_opt  # 내부용
+        # 수량
+        col_qty = find_first_match(df_ss.columns, SMARTSTORE_CANDIDATES["수량"])
+        if col_qty: auto_map["수량"] = col_qty
+        # 메모
+        col_memo = find_first_match(df_ss.columns, SMARTSTORE_CANDIDATES["메모"])
+        if col_memo: auto_map["메모"] = col_memo
+
+        # 주소 조합 컬럼 내부 키 저장
+        if col_addr1: auto_map["_주소1"] = col_addr1
+        if col_addr2: auto_map["_주소2"] = col_addr2
+
+        st.session_state["smartstore_auto_map"] = auto_map
+        st.success("자동 매핑을 완료했습니다. 아래에서 필요 시 수정하세요.")
+
+# 매핑 편집(헤더명 드롭다운)
+if "df_ss_cols" in st.session_state:
+    cols_choices = [""] + st.session_state["df_ss_cols"]
+    st.subheader("스마트스토어 매핑 편집 (헤더명 선택)")
+    edited_ss_map = {}
+    with st.form("smartstore_mapping_form"):
+        def selbox(label, key, default_header):
+            default = default_header if default_header in cols_choices else ""
+            return st.selectbox(f"{label} ⟶ 소스 헤더 선택", options=cols_choices,
+                               index=(cols_choices.index(default) if default in cols_choices else 0), key=key)
+
+        auto_map = st.session_state.get("smartstore_auto_map", {})
+        # 템플릿 필수 컬럼
+        sel_order = selbox("주문번호", "ss_map_order", auto_map.get("주문번호", ""))
+        sel_name  = selbox("받는분 이름", "ss_map_name", auto_map.get("받는분 이름", ""))
+        # 주소는 기본/상세를 합칠 수도 있음
+        sel_addr_main   = selbox("받는분 주소(기본)", "ss_map_addr1", auto_map.get("_주소1", auto_map.get("받는분 주소", "")))
+        sel_addr_detail = selbox("받는분 주소(상세, 선택)", "ss_map_addr2", auto_map.get("_주소2", ""))
+        sel_phone = selbox("받는분 전화번호", "ss_map_phone", auto_map.get("받는분 전화번호", ""))
+        sel_prod  = selbox("상품명", "ss_map_prod", auto_map.get("상품명", ""))
+        sel_opt   = selbox("옵션명(선택, 상품명과 결합)", "ss_map_opt", auto_map.get("_옵션명", ""))
+        sel_qty   = selbox("수량", "ss_map_qty", auto_map.get("수량", ""))
+        sel_memo  = selbox("메모", "ss_map_memo", auto_map.get("메모", ""))
+
+        saved = st.form_submit_button("스마트스토어 매핑 저장")
+        if saved:
+            edited_ss_map = {
+                "주문번호": sel_order,
+                "받는분 이름": sel_name,
+                "받는분 주소(기본)": sel_addr_main,
+                "받는분 주소(상세)": sel_addr_detail,
+                "받는분 전화번호": sel_phone,
+                "상품명": sel_prod,
+                "옵션명": sel_opt,
+                "수량": sel_qty,
+                "메모": sel_memo,
+            }
+            st.session_state["smartstore_user_map"] = edited_ss_map
+            st.success("스마트스토어 매핑을 저장했습니다.")
+
+run_ss = st.button("스마트스토어 변환 실행 (자동 매핑)")
+if run_ss:
+    if "df_ss_cols" not in st.session_state:
+        st.error("먼저 스마트스토어 파일을 업로드하고 자동 매핑을 실행해 주세요.")
+    elif tpl_df is None or len(template_columns) == 0:
+        st.error("유효한 템플릿이 필요합니다.")
+    else:
+        try:
+            df_ss = read_first_sheet_source_as_text(src_file_ss)
+        except Exception as e:
+            st.exception(RuntimeError(f"스마트스토어 소스 파일을 다시 읽는 중 오류: {e}"))
+        else:
+            user_map = st.session_state.get("smartstore_user_map", {})
+            auto_map = st.session_state.get("smartstore_auto_map", {})
+
+            def pick(key, default=""):
+                val = user_map.get(key, "")
+                if not val:
+                    if key == "받는분 주소(기본)":
+                        return auto_map.get("_주소1", default)
+                    if key == "받는분 주소(상세)":
+                        return auto_map.get("_주소2", default)
+                    if key == "옵션명":
+                        return auto_map.get("_옵션명", default)
+                    return auto_map.get(key, default)
+                return val
+
+            col_order = pick("주문번호")
+            col_name  = pick("받는분 이름")
+            col_addr1 = pick("받는분 주소(기본)")
+            col_addr2 = pick("받는분 주소(상세)")
+            col_phone = pick("받는분 전화번호")
+            col_prod  = pick("상품명")
+            col_opt   = pick("옵션명")
+            col_qty   = pick("수량")
+            col_memo  = pick("메모")
+
+            result_ss = pd.DataFrame(index=range(len(df_ss)), columns=template_columns)
+
+            if col_order in df_ss.columns:
+                result_ss["주문번호"] = df_ss[col_order]
+            if col_name in df_ss.columns:
+                result_ss["받는분 이름"] = df_ss[col_name]
+
+            addr_series = pd.Series([""] * len(df_ss))
+            if col_addr1 in df_ss.columns:
+                addr_series = df_ss[col_addr1].astype(str)
+            if col_addr2 in df_ss.columns:
+                detail = df_ss[col_addr2].astype(str)
+                addr_series = addr_series.fillna("").astype(str)
+                detail = detail.where(detail.str.lower() != "nan", "")
+                addr_series = (addr_series.where(addr_series.str.lower() != "nan", "") + " " + detail).str.strip()
+            result_ss["받는분 주소"] = addr_series
+
+            if col_phone in df_ss.columns:
+                series = df_ss[col_phone].astype(str)
+                result_ss["받는분 전화번호"] = series.where(series.str.lower() != "nan", "")
+
+            prod_series = pd.Series([""] * len(df_ss))
+            if col_prod in df_ss.columns:
+                prod_series = df_ss[col_prod].astype(str).where(lambda s: s.str.lower() != "nan", "")
+            if col_opt in df_ss.columns:
+                opt_series = df_ss[col_opt].astype(str).where(lambda s: s.str.lower() != "nan", "")
+                merged = []
+                for p, o in zip(prod_series, opt_series):
+                    if o and o.strip():
+                        merged.append(f"{p} / {o}" if p else o)
+                    else:
+                        merged.append(p)
+                prod_series = pd.Series(merged)
+            result_ss["상품명"] = prod_series
+
+            if col_qty in df_ss.columns:
+                result_ss["수량"] = pd.to_numeric(df_ss[col_qty], errors="coerce")
+            if col_memo in df_ss.columns:
+                result_ss["메모"] = df_ss[col_memo]
+
+            for col in template_columns:
+                if col in tpl_df.columns and tpl_df[col].notna().any():
+                    if pd.api.types.is_numeric_dtype(tpl_df[col]) and col != "받는분 전화번호":
+                        result_ss[col] = pd.to_numeric(result_ss[col], errors="coerce")
+
+            st.success(f"스마트스토어 변환 완료: 총 {len(result_ss)}행")
+            st.dataframe(result_ss.head(50))
+
+            buffer_ss = io.BytesIO()
+            with pd.ExcelWriter(buffer_ss, engine="openpyxl") as writer:
+                out_df_ss = result_ss[template_columns + [c for c in result_ss.columns if c not in template_columns]]
+                out_df_ss.to_excel(writer, index=False)
+            st.download_button(
+                label="스마트스토어 변환 결과 다운로드 (output_smartstore.xlsx)",
+                data=buffer_ss.getvalue(),
+                file_name="output_smartstore.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
+
+st.markdown("---")
+
+# ======================================================================
+# 4) 스마트스토어 파일 변환 (고정 매핑: 열 문자)
+# ======================================================================
+st.markdown("## 스마트스토어 파일 변환 (고정 매핑: 열 문자)")
+
+with st.expander("스마트스토어(고정) → 템플릿 매핑 보기", expanded=False):
+    st.markdown(
+        """
+        **스마트스토어 소스열 → 템플릿 컬럼**  
+        - `B` → **주문번호**  
+        - `L` → **받는분 이름** (수취인명)  
+        - `AP` → **받는분 주소** (통합배송지)  
+        - `AN` → **받는분 전화번호** (수취인연락처)  
+        - `Q & S` → **상품명** (두 열을 그대로 연결)  
+        - `U` → **수량**  
+        - `AU` → **메모** (배송메시지)
+        """
+    )
+
+st.subheader("스마트스토어 소스 파일 업로드 (고정 매핑)")
+src_file_ss_fixed = st.file_uploader("스마트스토어 형식의 파일 업로드 (예: 스마트스토어.xlsx)", type=["xlsx"], key="src_smartstore_fixed")
+
+run_ss_fixed = st.button("스마트스토어 변환 실행 (고정 매핑)")
+if run_ss_fixed:
+    if not src_file_ss_fixed:
+        st.error("스마트스토어 소스 파일을 업로드해 주세요.")
+    elif tpl_df is None or len(template_columns) == 0:
+        st.error("유효한 템플릿이 필요합니다.")
+    else:
+        try:
+            df_ss_fixed = read_first_sheet_source_as_text(src_file_ss_fixed)
+        except Exception as e:
+            st.exception(RuntimeError(f"스마트스토어 소스 파일을 읽는 중 오류: {e}"))
+        else:
+            result_ss_fixed = pd.DataFrame(index=range(len(df_ss_fixed)), columns=template_columns)
+
+            # 열 문자 → 실제 소스 컬럼명 해석
+            src_cols_by_index_ss = list(df_ss_fixed.columns)
+
+            def resolve(letter: str) -> str:
+                idx = excel_col_to_index(letter)
+                if idx >= len(src_cols_by_index_ss):
+                    raise IndexError(
+                        f"스마트스토어 소스에 {letter} 열(0-based index {idx})이 없습니다. "
+                        f"소스 컬럼 수: {len(src_cols_by_index_ss)}"
+                    )
+                return src_cols_by_index_ss[idx]
+
+            try:
+                col_order = resolve(SMARTSTORE_FIXED_LETTER_MAPPING["주문번호"])
+                col_name  = resolve(SMARTSTORE_FIXED_LETTER_MAPPING["받는분 이름"])
+                col_addr  = resolve(SMARTSTORE_FIXED_LETTER_MAPPING["받는분 주소"])
+                col_phone = resolve(SMARTSTORE_FIXED_LETTER_MAPPING["받는분 전화번호"])
+                col_q     = resolve(SMARTSTORE_FIXED_LETTER_MAPPING["상품명_Q"])
+                col_s     = resolve(SMARTSTORE_FIXED_LETTER_MAPPING["상품명_S"])
+                col_qty   = resolve(SMARTSTORE_FIXED_LETTER_MAPPING["수량"])
+                col_memo  = resolve(SMARTSTORE_FIXED_LETTER_MAPPING["메모"])
+            except Exception as e:
+                st.exception(RuntimeError(f"스마트스토어 고정 매핑 인덱스 계산 중 오류: {e}"))
+            else:
+                # 채우기
+                result_ss_fixed["주문번호"] = df_ss_fixed[col_order]
+                result_ss_fixed["받는분 이름"] = df_ss_fixed[col_name]
+                result_ss_fixed["받는분 주소"] = df_ss_fixed[col_addr]
+                # 전화번호: 문자열(0 보존)
+                series_phone = df_ss_fixed[col_phone].astype(str)
+                result_ss_fixed["받는분 전화번호"] = series_phone.where(series_phone.str.lower() != "nan", "")
+                # 상품명: Q & S 그대로 연결(구분자 없이)
+                q_series = df_ss_fixed[col_q].astype(str).where(lambda s: s.str.lower() != "nan", "")
+                s_series = df_ss_fixed[col_s].astype(str).where(lambda s: s.str.lower() != "nan", "")
+                result_ss_fixed["상품명"] = q_series.fillna("") + s_series.fillna("")
+                # 수량
+                result_ss_fixed["수량"] = pd.to_numeric(df_ss_fixed[col_qty], errors="coerce")
+                # 메모
+                result_ss_fixed["메모"] = df_ss_fixed[col_memo]
+
+                # 템플릿 숫자형 정렬(전화번호 제외)
+                for col in template_columns:
+                    if col in tpl_df.columns and tpl_df[col].notna().any():
+                        if pd.api.types.is_numeric_dtype(tpl_df[col]) and col != "받는분 전화번호":
+                            result_ss_fixed[col] = pd.to_numeric(result_ss_fixed[col], errors="coerce")
+
+                st.success(f"스마트스토어(고정) 변환 완료: 총 {len(result_ss_fixed)}행")
+                st.dataframe(result_ss_fixed.head(50))
+
+                buffer_ss_fixed = io.BytesIO()
+                with pd.ExcelWriter(buffer_ss_fixed, engine="openpyxl") as writer:
+                    out_df_ss_fixed = result_ss_fixed[template_columns + [c for c in result_ss_fixed.columns if c not in template_columns]]
+                    out_df_ss_fixed.to_excel(writer, index=False)
+                st.download_button(
+                    label="스마트스토어(고정) 변환 결과 다운로드 (output_smartstore_fixed.xlsx)",
+                    data=buffer_ss_fixed.getvalue(),
+                    file_name="output_smartstore_fixed.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                )
+
+st.markdown("---")
+st.caption("라오라 / 쿠팡 / 스마트스토어(자동/고정) 외 양식도 추가 가능해요. 원본 규칙만 알려주시면 바로 반영합니다.")
