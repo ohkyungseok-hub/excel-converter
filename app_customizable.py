@@ -11,7 +11,7 @@ import streamlit as st
 st.set_page_config(page_title="엑셀 양식 변환기 (1→2)", layout="centered")
 
 st.title("엑셀 양식 변환기 (1 → 2)")
-st.caption("라오라 / 쿠팡 / 스마트스토어(고정 매핑) 형식을 2번 템플릿으로 변환합니다. (전화번호 0 보존)")
+st.caption("라오라 / 쿠팡 / 스마트스토어(고정) / 떠리몰(고정) 형식을 2번 템플릿으로 변환합니다. (전화번호 0 보존)")
 
 # -------------------------- Helpers --------------------------
 def excel_col_to_index(col_letters: str) -> int:
@@ -104,6 +104,18 @@ SMARTSTORE_FIXED_LETTER_MAPPING = {
     "상품명_S": "S",
     "수량": "U",
     "메모": "AU",
+}
+
+# 떠리몰 고정 매핑 (열 문자)
+# H: 주문번호, AB: 수령자명, AE: 주소, AC: 수령자연락처, V: 옵션명:옵션값(→상품명), Y: 수량, AA: 배송메시지
+TTARIMALL_FIXED_LETTER_MAPPING = {
+    "주문번호": "H",
+    "받는분 이름": "AB",
+    "받는분 주소": "AE",
+    "받는분 전화번호": "AC",
+    "상품명": "V",
+    "수량": "Y",
+    "메모": "AA",
 }
 
 # -------------------------- Sidebar --------------------------
@@ -383,7 +395,6 @@ if run_ss_fixed:
         else:
             result_ss_fixed = pd.DataFrame(index=range(len(df_ss_fixed)), columns=template_columns)
 
-            # 열 문자 → 실제 소스 컬럼명 해석
             src_cols_by_index_ss = list(df_ss_fixed.columns)
 
             def resolve(letter: str) -> str:
@@ -407,23 +418,17 @@ if run_ss_fixed:
             except Exception as e:
                 st.exception(RuntimeError(f"스마트스토어 고정 매핑 인덱스 계산 중 오류: {e}"))
             else:
-                # 채우기
                 result_ss_fixed["주문번호"] = df_ss_fixed[col_order]
                 result_ss_fixed["받는분 이름"] = df_ss_fixed[col_name]
                 result_ss_fixed["받는분 주소"] = df_ss_fixed[col_addr]
-                # 전화번호: 문자열(0 보존)
                 series_phone = df_ss_fixed[col_phone].astype(str)
                 result_ss_fixed["받는분 전화번호"] = series_phone.where(series_phone.str.lower() != "nan", "")
-                # 상품명: Q & S 그대로 연결(구분자 없이)
                 q_series = df_ss_fixed[col_q].astype(str).where(lambda s: s.str.lower() != "nan", "")
                 s_series = df_ss_fixed[col_s].astype(str).where(lambda s: s.str.lower() != "nan", "")
                 result_ss_fixed["상품명"] = q_series.fillna("") + s_series.fillna("")
-                # 수량
                 result_ss_fixed["수량"] = pd.to_numeric(df_ss_fixed[col_qty], errors="coerce")
-                # 메모
                 result_ss_fixed["메모"] = df_ss_fixed[col_memo]
 
-                # 템플릿 숫자형 정렬(전화번호 제외)
                 for col in template_columns:
                     if col in tpl_df.columns and tpl_df[col].notna().any():
                         if pd.api.types.is_numeric_dtype(tpl_df[col]) and col != "받는분 전화번호":
@@ -444,4 +449,99 @@ if run_ss_fixed:
                 )
 
 st.markdown("---")
-st.caption("라오라 / 쿠팡 / 스마트스토어(고정) 외 양식도 추가 가능합니다. 규칙만 알려주시면 바로 넣어드릴게요.")
+
+# ======================================================================
+# 4) 떠리몰 파일 변환 (고정 매핑: 열 문자)
+# ======================================================================
+st.markdown("## 떠리몰 파일 변환 (고정 매핑: 열 문자)")
+
+with st.expander("떠리몰(고정) → 템플릿 매핑 보기", expanded=False):
+    st.markdown(
+        """
+        **떠리몰 소스열 → 템플릿 컬럼**  
+        - `H` → **주문번호**  
+        - `AB` → **받는분 이름** (수령자명)  
+        - `AE` → **받는분 주소** (주소)  
+        - `AC` → **받는분 전화번호** (수령자연락처)  
+        - `V` → **상품명** (옵션명:옵션값)  
+        - `Y` → **수량**  
+        - `AA` → **메모** (배송메시지)
+        """
+    )
+
+st.subheader("떠리몰 소스 파일 업로드 (고정 매핑)")
+src_file_ttarimall = st.file_uploader("떠리몰 형식의 파일 업로드 (예: 떠리몰.xlsx)", type=["xlsx"], key="src_ttarimall")
+
+run_ttarimall = st.button("떠리몰 변환 실행 (고정 매핑)")
+if run_ttarimall:
+    if not src_file_ttarimall:
+        st.error("떠리몰 소스 파일을 업로드해 주세요.")
+    elif tpl_df is None or len(template_columns) == 0:
+        st.error("유효한 템플릿이 필요합니다.")
+    else:
+        try:
+            df_tm = read_first_sheet_source_as_text(src_file_ttarimall)
+        except Exception as e:
+            st.exception(RuntimeError(f"떠리몰 소스 파일을 읽는 중 오류: {e}"))
+        else:
+            result_tm = pd.DataFrame(index=range(len(df_tm)), columns=template_columns)
+
+            src_cols_by_index_tm = list(df_tm.columns)
+
+            def resolve(letter: str) -> str:
+                idx = excel_col_to_index(letter)
+                if idx >= len(src_cols_by_index_tm):
+                    raise IndexError(
+                        f"떠리몰 소스에 {letter} 열(0-based index {idx})이 없습니다. "
+                        f"소스 컬럼 수: {len(src_cols_by_index_tm)}"
+                    )
+                return src_cols_by_index_tm[idx]
+
+            try:
+                col_order = resolve(TTARIMALL_FIXED_LETTER_MAPPING["주문번호"])
+                col_name  = resolve(TTARIMALL_FIXED_LETTER_MAPPING["받는분 이름"])
+                col_addr  = resolve(TTARIMALL_FIXED_LETTER_MAPPING["받는분 주소"])
+                col_phone = resolve(TTARIMALL_FIXED_LETTER_MAPPING["받는분 전화번호"])
+                col_prod  = resolve(TTARIMALL_FIXED_LETTER_MAPPING["상품명"])
+                col_qty   = resolve(TTARIMALL_FIXED_LETTER_MAPPING["수량"])
+                col_memo  = resolve(TTARIMALL_FIXED_LETTER_MAPPING["메모"])
+            except Exception as e:
+                st.exception(RuntimeError(f"떠리몰 고정 매핑 인덱스 계산 중 오류: {e}"))
+            else:
+                # 채우기
+                result_tm["주문번호"] = df_tm[col_order]
+                result_tm["받는분 이름"] = df_tm[col_name]
+                result_tm["받는분 주소"] = df_tm[col_addr]
+                # 전화번호: 문자열(0 보존)
+                series_phone = df_tm[col_phone].astype(str)
+                result_tm["받는분 전화번호"] = series_phone.where(series_phone.str.lower() != "nan", "")
+                # 상품명: V열(옵션명:옵션값) 그대로 사용
+                prod_series = df_tm[col_prod].astype(str).where(lambda s: s.str.lower() != "nan", "")
+                result_tm["상품명"] = prod_series
+                # 수량
+                result_tm["수량"] = pd.to_numeric(df_tm[col_qty], errors="coerce")
+                # 메모
+                result_tm["메모"] = df_tm[col_memo]
+
+                # 템플릿 숫자형 정렬(전화번호 제외)
+                for col in template_columns:
+                    if col in tpl_df.columns and tpl_df[col].notna().any():
+                        if pd.api.types.is_numeric_dtype(tpl_df[col]) and col != "받는분 전화번호":
+                            result_tm[col] = pd.to_numeric(result_tm[col], errors="coerce")
+
+                st.success(f"떠리몰(고정) 변환 완료: 총 {len(result_tm)}행")
+                st.dataframe(result_tm.head(50))
+
+                buffer_tm = io.BytesIO()
+                with pd.ExcelWriter(buffer_tm, engine="openpyxl") as writer:
+                    out_df_tm = result_tm[template_columns + [c for c in result_tm.columns if c not in template_columns]]
+                    out_df_tm.to_excel(writer, index=False)
+                st.download_button(
+                    label="떠리몰(고정) 변환 결과 다운로드 (output_ttarimall.xlsx)",
+                    data=buffer_tm.getvalue(),
+                    file_name="output_ttarimall.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                )
+
+st.markdown("---")
+st.caption("라오라 / 쿠팡 / 스마트스토어(고정) / 떠리몰(고정) 외 양식도 추가 가능합니다. 규칙만 알려주시면 바로 넣어드릴게요.")
