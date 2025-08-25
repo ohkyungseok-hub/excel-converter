@@ -5,13 +5,15 @@
 import io
 import re
 import json
+import zipfile
+from datetime import datetime
 import pandas as pd
 import streamlit as st
 
 st.set_page_config(page_title="엑셀 양식 변환기 (1→2)", layout="centered")
 
 st.title("엑셀 양식 변환기 (1 → 2)")
-st.caption("라오라 / 쿠팡 / 스마트스토어(고정) / 떠리몰(고정) 형식을 2번 템플릿으로 변환합니다. (전화번호 0 보존)")
+st.caption("라오라 / 쿠팡 / 스마트스토어(키워드) / 떠리몰(S&V 규칙) 형식을 2번 템플릿으로 변환합니다. (전화번호 0 보존)")
 
 # -------------------------- Helpers --------------------------
 def excel_col_to_index(col_letters: str) -> int:
@@ -60,6 +62,9 @@ def ensure_mapping_initialized(template_columns, default_mapping):
     st.session_state["mapping"] = synced
     return st.session_state["mapping"]
 
+def norm_header(s: str) -> str:
+    return re.sub(r"[\s\(\)\[\]{}:：/\\\-]", "", str(s).strip().lower())
+
 # -------------------- Defaults --------------------
 DEFAULT_TEMPLATE_COLUMNS = [
     "주문번호",
@@ -93,28 +98,25 @@ COUPANG_MAPPING = {
     "메모": "AE",
 }
 
-# 스마트스토어 고정 매핑 (열 문자)
-# B: 주문번호, L: 수취인명, AP: 통합배송지, AN: 수취인연락처, Q & S: 상품명(연결), U: 수량, AU: 배송메시지
-SMARTSTORE_FIXED_LETTER_MAPPING = {
-    "주문번호": "B",
-    "받는분 이름": "L",
-    "받는분 주소": "AP",
-    "받는분 전화번호": "AN",
-    "상품명_Q": "Q",
-    "상품명_S": "S",
-    "수량": "U",
-    "메모": "AU",
+# 스마트스토어 키워드 매핑용 후보
+SS_NAME_MAP = {
+    "주문번호": ["주문번호"],
+    "받는분 이름": ["수취인명"],
+    "받는분 주소": ["통합배송지"],
+    "받는분 전화번호": ["수취인연락처1", "수취인연락처", "수취인휴대폰", "연락처1"],
+    "상품명_left": ["상품명"],
+    "상품명_right": ["옵션정보", "옵션명", "옵션내용"],
+    "수량": ["수량", "구매수량"],
+    "메모": ["배송메세지", "배송메시지", "배송요청사항"],
 }
 
-# 떠리몰 고정 매핑 (열 문자)
-# H: 주문번호, AB: 수령자명, AE: 주소, AC: 수령자연락처,
-# S & V: 상품명(규칙: S와 V가 같으면 V만, 다르면 S&V 연결), Y: 수량, AA: 배송메시지
+# 떠리몰 고정 매핑 (열 문자) + 상품명 S&V 규칙
 TTARIMALL_FIXED_LETTER_MAPPING = {
     "주문번호": "H",
     "받는분 이름": "AB",
     "받는분 주소": "AE",
     "받는분 전화번호": "AC",
-    "상품명": "V",  # V는 기본, 실제 처리에서 S와 비교 후 결정
+    "상품명": "V",  # 비교는 S와 수행
     "수량": "Y",
     "메모": "AA",
 }
@@ -361,7 +363,7 @@ if run_coupang:
 st.markdown("---")
 
 # ======================================================================
-# 3) 스마트스토어 파일 변환 (고정 매핑: 열 문자)
+# 3) 스마트스토어 파일 변환 (키워드 매핑)
 # ======================================================================
 st.markdown("## 스마트스토어 파일 변환 (키워드 매핑)")
 
@@ -398,82 +400,48 @@ if run_ss_fixed:
         except Exception as e:
             st.exception(RuntimeError(f"스마트스토어 소스 파일을 읽는 중 오류: {e}"))
         else:
-            # ---- 키워드 매핑 유틸 ----
-            def _norm(s: str) -> str:
-                # 소문자, 공백/탭 제거, 괄호·콜론 등 일반 구분문자 제거
-                return re.sub(r"[\s\(\)\[\]{}:：/\\\-]", "", str(s).strip().lower())
-
-            norm_cols = {_norm(c): c for c in df_ss.columns}  # 정규화명 → 실제열명
-
-            def find_col(preferred_names):
-                """
-                preferred_names: 우선순위가 높은 후보 문자열들의 리스트.
-                1) 완전 일치(정규화) → 2) 포함 매칭(정규화) 순으로 탐색.
-                """
-                candidates_norm = [_norm(x) for x in preferred_names]
-                # 1) 완전 일치
-                for n in candidates_norm:
+            def find_col(preferred_names, df):
+                norm_cols = {norm_header(c): c for c in df.columns}
+                cand_norm = [norm_header(x) for x in preferred_names]
+                for n in cand_norm:
                     if n in norm_cols:
                         return norm_cols[n]
-                # 2) 포함 매칭(예: '배송메세지' vs '배송메세지(판매자)')
-                for want in candidates_norm:
+                for want in cand_norm:
                     hits = [orig for k, orig in norm_cols.items() if want in k]
                     if hits:
-                        # 가장 짧은(가장 깔끔한) 헤더명을 우선
                         return sorted(hits, key=len)[0]
                 raise KeyError(f"해당 키워드에 맞는 컬럼을 찾을 수 없습니다: {preferred_names}")
 
-            # ---- 키워드 사전 ----
-            # 사용자가 명시한 기본 키워드를 최우선으로, 흔한 변형을 보조 키워드로 둠
-            NAME_MAP = {
-                "주문번호": ["주문번호"],
-                "받는분 이름": ["수취인명"],
-                "받는분 주소": ["통합배송지"],
-                "받는분 전화번호": ["수취인연락처1", "수취인연락처", "수취인휴대폰", "연락처1"],
-                "상품명_left": ["상품명"],
-                "상품명_right": ["옵션정보", "옵션명", "옵션내용"],
-                "수량": ["수량", "구매수량"],
-                "메모": ["배송메세지", "배송메시지", "배송요청사항"],
-            }
-
-            # ---- 컬럼 해석 ----
             try:
-                col_order = find_col(NAME_MAP["주문번호"])
-                col_name  = find_col(NAME_MAP["받는분 이름"])
-                col_addr  = find_col(NAME_MAP["받는분 주소"])
-                col_phone = find_col(NAME_MAP["받는분 전화번호"])
-                col_prod_l = find_col(NAME_MAP["상품명_left"])
-                col_prod_r = find_col(NAME_MAP["상품명_right"])
-                col_qty   = find_col(NAME_MAP["수량"])
-                col_memo  = find_col(NAME_MAP["메모"])
+                col_order = find_col(SS_NAME_MAP["주문번호"], df_ss)
+                col_name  = find_col(SS_NAME_MAP["받는분 이름"], df_ss)
+                col_addr  = find_col(SS_NAME_MAP["받는분 주소"], df_ss)
+                col_phone = find_col(SS_NAME_MAP["받는분 전화번호"], df_ss)
+                col_prod_l = find_col(SS_NAME_MAP["상품명_left"], df_ss)
+                col_prod_r = find_col(SS_NAME_MAP["상품명_right"], df_ss)
+                col_qty   = find_col(SS_NAME_MAP["수량"], df_ss)
+                col_memo  = find_col(SS_NAME_MAP["메모"], df_ss)
             except Exception as e:
                 st.exception(RuntimeError(f"스마트스토어 키워드 매핑 해석 중 오류: {e}"))
             else:
-                # ---- 결과 채우기 ----
                 result_ss = pd.DataFrame(index=range(len(df_ss)), columns=template_columns)
 
                 result_ss["주문번호"]   = df_ss[col_order]
                 result_ss["받는분 이름"] = df_ss[col_name]
                 result_ss["받는분 주소"] = df_ss[col_addr]
 
-                # 전화번호: 문자열로 처리해 '0' 보존
                 series_phone = df_ss[col_phone].astype(str)
                 result_ss["받는분 전화번호"] = series_phone.where(series_phone.str.lower() != "nan", "")
 
-                # 상품명: "=상품명&옵션정보" 규칙 (둘 중 하나 비어도 자연스럽게 동작)
                 left_raw  = df_ss[col_prod_l].astype(str)
                 right_raw = df_ss[col_prod_r].astype(str)
                 left  = left_raw.where(left_raw.str.lower()  != "nan", "")
                 right = right_raw.where(right_raw.str.lower() != "nan", "")
                 result_ss["상품명"] = (left.fillna("") + right.fillna(""))
 
-                # 수량
                 result_ss["수량"] = pd.to_numeric(df_ss[col_qty], errors="coerce")
-
-                # 메모
                 result_ss["메모"] = df_ss[col_memo]
 
-                # 템플릿 숫자형 정렬(전화번호 제외)
                 for col in template_columns:
                     if col in tpl_df.columns and tpl_df[col].notna().any():
                         if pd.api.types.is_numeric_dtype(tpl_df[col]) and col != "받는분 전화번호":
@@ -548,21 +516,19 @@ if run_ttarimall:
                 col_addr  = resolve(TTARIMALL_FIXED_LETTER_MAPPING["받는분 주소"])
                 col_phone = resolve(TTARIMALL_FIXED_LETTER_MAPPING["받는분 전화번호"])
                 col_prod_v  = resolve(TTARIMALL_FIXED_LETTER_MAPPING["상품명"])  # V
-                col_prod_s  = resolve("S")  # ⭐ S 열도 함께 사용
+                col_prod_s  = resolve("S")  # S 열도 함께 사용
                 col_qty   = resolve(TTARIMALL_FIXED_LETTER_MAPPING["수량"])
                 col_memo  = resolve(TTARIMALL_FIXED_LETTER_MAPPING["메모"])
             except Exception as e:
                 st.exception(RuntimeError(f"떠리몰 고정 매핑 인덱스 계산 중 오류: {e}"))
             else:
-                # 채우기
                 result_tm["주문번호"] = df_tm[col_order]
                 result_tm["받는분 이름"] = df_tm[col_name]
                 result_tm["받는분 주소"] = df_tm[col_addr]
-                # 전화번호: 문자열(0 보존)
                 series_phone = df_tm[col_phone].astype(str)
                 result_tm["받는분 전화번호"] = series_phone.where(series_phone.str.lower() != "nan", "")
 
-                # 상품명: S와 V가 같으면 V, 다르면 S&V로 연결
+                # 상품명: S와 V가 같으면 V, 다르면 S&V
                 s_series_raw = df_tm[col_prod_s].astype(str)
                 v_series_raw = df_tm[col_prod_v].astype(str)
                 s_series = s_series_raw.where(s_series_raw.str.lower() != "nan", "")
@@ -572,12 +538,9 @@ if run_ttarimall:
                 prod_series.loc[~same_mask] = s_series[~same_mask] + v_series[~same_mask]
                 result_tm["상품명"] = prod_series
 
-                # 수량
                 result_tm["수량"] = pd.to_numeric(df_tm[col_qty], errors="coerce")
-                # 메모
                 result_tm["메모"] = df_tm[col_memo]
 
-                # 템플릿 숫자형 정렬(전화번호 제외)
                 for col in template_columns:
                     if col in tpl_df.columns and tpl_df[col].notna().any():
                         if pd.api.types.is_numeric_dtype(tpl_df[col]) and col != "받는분 전화번호":
@@ -598,4 +561,221 @@ if run_ttarimall:
                 )
 
 st.markdown("---")
-st.caption("라오라 / 쿠팡 / 스마트스토어(고정) / 떠리몰(고정) 외 양식도 추가 가능합니다. 규칙만 알려주시면 바로 넣어드릴게요.")
+
+# ======================================================================
+# 5) 배치 처리: 여러 파일 자동 분류 → 일괄 변환 → ZIP 다운로드
+# ======================================================================
+st.markdown("## 🗂️ 배치 처리 (여러 파일 한번에)")
+
+batch_files = st.file_uploader("여러 엑셀 파일을 한번에 업로드하세요", type=["xlsx"], accept_multiple_files=True, key="batch_files")
+run_batch = st.button("배치 변환 실행")
+
+def detect_platform_by_headers(df: pd.DataFrame) -> str:
+    headers = [norm_header(c) for c in df.columns]
+
+    def has_any(keys):
+        keys_norm = [norm_header(k) for k in keys]
+        return any(k in headers for k in keys_norm)
+
+    # 떠리몰 신호
+    if has_any(["수령자명", "수령자연락처", "옵션명:옵션값"]):
+        return "TTARIMALL"
+    # 스마트스토어 신호
+    if has_any(["수취인명", "수취인연락처1", "통합배송지"]):
+        return "SMARTSTORE"
+    # 쿠팡 신호
+    if has_any(["최초등록상품명"]) or (has_any(["구매수"]) and has_any(["옵션명"])) or has_any(["배송메시지"]):
+        return "COUPANG"
+    # 그 외 → 라오라로 가정
+    return "LAORA"
+
+def convert_laora(df_src: pd.DataFrame) -> pd.DataFrame:
+    mapping = st.session_state.get("mapping", {})
+    if not isinstance(mapping, dict) or not mapping:
+        raise RuntimeError("라오라 매핑이 없습니다. 사이드바에서 라오라 매핑을 먼저 저장해 주세요.")
+    result = pd.DataFrame(index=range(len(df_src)), columns=template_columns)
+    src_cols_by_index = list(df_src.columns)
+    resolved_map = {}
+    for tpl_header, xl_letters in mapping.items():
+        if not xl_letters:
+            continue
+        idx = excel_col_to_index(xl_letters)
+        if idx >= len(src_cols_by_index):
+            raise IndexError(
+                f"소스 파일에 {xl_letters} 열(0-based index {idx})이 존재하지 않습니다. "
+                f"소스 컬럼 수: {len(src_cols_by_index)}"
+            )
+        resolved_map[tpl_header] = src_cols_by_index[idx]
+    for tpl_header, src_colname in resolved_map.items():
+        if tpl_header == "수량":
+            result[tpl_header] = pd.to_numeric(df_src[src_colname], errors="coerce")
+        elif tpl_header == "받는분 전화번호":
+            series = df_src[src_colname].astype(str)
+            result[tpl_header] = series.where(series.str.lower() != "nan", "")
+        else:
+            result[tpl_header] = df_src[src_colname]
+    return result
+
+def convert_coupang(df_src: pd.DataFrame) -> pd.DataFrame:
+    result = pd.DataFrame(index=range(len(df_src)), columns=template_columns)
+    src_cols_by_index = list(df_src.columns)
+    resolved_map = {}
+    for tpl_header, xl_letters in COUPANG_MAPPING.items():
+        idx = excel_col_to_index(xl_letters)
+        if idx >= len(src_cols_by_index):
+            raise IndexError(
+                f"쿠팡 소스에 {xl_letters} 열(0-based index {idx})이 존재하지 않습니다. "
+                f"소스 컬럼 수: {len(src_cols_by_index)}"
+            )
+        resolved_map[tpl_header] = src_cols_by_index[idx]
+    for tpl_header, src_colname in resolved_map.items():
+        if tpl_header == "수량":
+            result[tpl_header] = pd.to_numeric(df_src[src_colname], errors="coerce")
+        elif tpl_header == "받는분 전화번호":
+            series = df_src[src_colname].astype(str)
+            result[tpl_header] = series.where(series.str.lower() != "nan", "")
+        else:
+            result[tpl_header] = df_src[src_colname]
+    return result
+
+def find_col(preferred_names, df):
+    norm_cols = {norm_header(c): c for c in df.columns}
+    cand_norm = [norm_header(x) for x in preferred_names]
+    for n in cand_norm:
+        if n in norm_cols:
+            return norm_cols[n]
+    for want in cand_norm:
+        hits = [orig for k, orig in norm_cols.items() if want in k]
+        if hits:
+            return sorted(hits, key=len)[0]
+    raise KeyError(f"해당 키워드에 맞는 컬럼을 찾을 수 없습니다: {preferred_names}")
+
+def convert_smartstore_keywords(df_ss: pd.DataFrame) -> pd.DataFrame:
+    col_order = find_col(SS_NAME_MAP["주문번호"], df_ss)
+    col_name  = find_col(SS_NAME_MAP["받는분 이름"], df_ss)
+    col_addr  = find_col(SS_NAME_MAP["받는분 주소"], df_ss)
+    col_phone = find_col(SS_NAME_MAP["받는분 전화번호"], df_ss)
+    col_prod_l = find_col(SS_NAME_MAP["상품명_left"], df_ss)
+    col_prod_r = find_col(SS_NAME_MAP["상품명_right"], df_ss)
+    col_qty   = find_col(SS_NAME_MAP["수량"], df_ss)
+    col_memo  = find_col(SS_NAME_MAP["메모"], df_ss)
+
+    result = pd.DataFrame(index=range(len(df_ss)), columns=template_columns)
+    result["주문번호"]   = df_ss[col_order]
+    result["받는분 이름"] = df_ss[col_name]
+    result["받는분 주소"] = df_ss[col_addr]
+    phone = df_ss[col_phone].astype(str)
+    result["받는분 전화번호"] = phone.where(phone.str.lower() != "nan", "")
+    lraw = df_ss[col_prod_l].astype(str)
+    rraw = df_ss[col_prod_r].astype(str)
+    l = lraw.where(lraw.str.lower() != "nan", "")
+    r = rraw.where(rraw.str.lower() != "nan", "")
+    result["상품명"] = l.fillna("") + r.fillna("")
+    result["수량"] = pd.to_numeric(df_ss[col_qty], errors="coerce")
+    result["메모"] = df_ss[col_memo]
+    return result
+
+def convert_ttarimall(df_tm: pd.DataFrame) -> pd.DataFrame:
+    src_cols_by_index = list(df_tm.columns)
+    def resolve(letter: str) -> str:
+        idx = excel_col_to_index(letter)
+        if idx >= len(src_cols_by_index):
+            raise IndexError(
+                f"떠리몰 소스에 {letter} 열(0-based index {idx})이 없습니다. "
+                f"소스 컬럼 수: {len(src_cols_by_index)}"
+            )
+        return src_cols_by_index[idx]
+
+    col_order = resolve(TTARIMALL_FIXED_LETTER_MAPPING["주문번호"])
+    col_name  = resolve(TTARIMALL_FIXED_LETTER_MAPPING["받는분 이름"])
+    col_addr  = resolve(TTARIMALL_FIXED_LETTER_MAPPING["받는분 주소"])
+    col_phone = resolve(TTARIMALL_FIXED_LETTER_MAPPING["받는분 전화번호"])
+    col_v     = resolve(TTARIMALL_FIXED_LETTER_MAPPING["상품명"])
+    # S는 고정
+    col_s     = resolve("S")
+    col_qty   = resolve(TTARIMALL_FIXED_LETTER_MAPPING["수량"])
+    col_memo  = resolve(TTARIMALL_FIXED_LETTER_MAPPING["메모"])
+
+    result = pd.DataFrame(index=range(len(df_tm)), columns=template_columns)
+    result["주문번호"] = df_tm[col_order]
+    result["받는분 이름"] = df_tm[col_name]
+    result["받는분 주소"] = df_tm[col_addr]
+    phone = df_tm[col_phone].astype(str)
+    result["받는분 전화번호"] = phone.where(phone.str.lower() != "nan", "")
+
+    s_raw = df_tm[col_s].astype(str)
+    v_raw = df_tm[col_v].astype(str)
+    s = s_raw.where(s_raw.str.lower() != "nan", "")
+    v = v_raw.where(v_raw.str.lower() != "nan", "")
+    same = (s == v)
+    prod = v.copy()
+    prod.loc[~same] = s[~same] + v[~same]
+    result["상품명"] = prod
+
+    result["수량"] = pd.to_numeric(df_tm[col_qty], errors="coerce")
+    result["메모"] = df_tm[col_memo]
+    return result
+
+def post_numeric_alignment(result_df: pd.DataFrame):
+    # 템플릿 숫자형 정렬(전화번호 제외)
+    for col in template_columns:
+        if col in result_df.columns and col in tpl_df.columns and tpl_df[col].notna().any():
+            if pd.api.types.is_numeric_dtype(tpl_df[col]) and col != "받는분 전화번호":
+                result_df[col] = pd.to_numeric(result_df[col], errors="coerce")
+
+if run_batch:
+    if not batch_files:
+        st.error("엑셀 파일을 하나 이상 업로드해 주세요.")
+    elif tpl_df is None or len(template_columns) == 0:
+        st.error("유효한 템플릿이 필요합니다.")
+    else:
+        zip_buffer = io.BytesIO()
+        logs = []
+        with zipfile.ZipFile(zip_buffer, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+            for f in batch_files:
+                fname = getattr(f, "name", "uploaded.xlsx")
+                try:
+                    df = read_first_sheet_source_as_text(f)
+                except Exception as e:
+                    logs.append(f"[FAIL] {fname}: 파일 읽기 오류 - {e}")
+                    continue
+
+                platform = detect_platform_by_headers(df)
+                try:
+                    if platform == "TTARIMALL":
+                        out_df = convert_ttarimall(df)
+                    elif platform == "SMARTSTORE":
+                        out_df = convert_smartstore_keywords(df)
+                    elif platform == "COUPANG":
+                        out_df = convert_coupang(df)
+                    else:  # LAORA
+                        out_df = convert_laora(df)
+                    post_numeric_alignment(out_df)
+
+                    # 파일별 엑셀 쓰기
+                    xbuf = io.BytesIO()
+                    with pd.ExcelWriter(xbuf, engine="openpyxl") as writer:
+                        out_df_sorted = out_df[template_columns + [c for c in out_df.columns if c not in template_columns]]
+                        out_df_sorted.to_excel(writer, index=False)
+                    base = fname.rsplit(".", 1)[0]
+                    out_name = f"{base}__{platform.lower()}_converted.xlsx"
+                    zf.writestr(out_name, xbuf.getvalue())
+
+                    logs.append(f"[OK]   {fname}: {platform} → rows={len(out_df)} → {out_name}")
+                except Exception as e:
+                    logs.append(f"[FAIL] {fname}: {platform} 처리 중 오류 - {e}")
+
+            # 로그 파일 추가
+            log_text = "Batch Convert Log - " + datetime.now().strftime("%Y-%m-%d %H:%M:%S") + "\n" + "\n".join(logs)
+            zf.writestr("batch_convert_log.txt", log_text)
+
+        st.success("배치 변환이 완료되었습니다.")
+        st.text_area("변환 로그", value="\n".join(logs), height=200)
+        st.download_button(
+            label="배치 변환 결과 ZIP 다운로드",
+            data=zip_buffer.getvalue(),
+            file_name=f"batch_converted_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip",
+            mime="application/zip",
+        )
+
+st.caption("라오라 / 쿠팡 / 스마트스토어(키워드) / 떠리몰(S&V) 외 양식도 추가 가능합니다. 규칙만 알려주시면 바로 넣어드릴게요.")
