@@ -786,6 +786,11 @@ st.caption("라오라 / 쿠팡 / 스마트스토어(키워드) / 떠리몰(S&V) 
 
 # ---- Add this to your Helpers section ----
 # ----- REPLACE your helper with this safe version -----
+# ======================================================================
+# 6) 송장등록: 송장파일(.xls/.xlsx) → 라오/스마트스토어/쿠팡 분류 & 생성
+# ======================================================================
+
+# 안전 로더(.xls 지원) — 위 Helpers에 두셔도 됩니다.
 def _read_excel_any(file, header=0, dtype=str, keep_default_na=False) -> pd.DataFrame:
     """
     안전한 엑셀 로더 (.xlsx/.xls)
@@ -794,18 +799,14 @@ def _read_excel_any(file, header=0, dtype=str, keep_default_na=False) -> pd.Data
       - .xls  → xlrd (pip install xlrd>=2.0.1)
       - 확장자 미상/실패시: generic → openpyxl → xlrd 순으로 폴백
     """
-    # 업로드 파일명과 바이트 확보
     name = (getattr(file, "name", "") or "").lower()
 
     data = None
-    # Streamlit UploadedFile는 getvalue() 지원
     if hasattr(file, "getvalue"):
         try:
             data = file.getvalue()
         except Exception:
             data = None
-
-    # 혹시 일반 파일객체라면 read()로 확보
     if data is None:
         try:
             cur = file.tell() if hasattr(file, "tell") else None
@@ -828,12 +829,10 @@ def _read_excel_any(file, header=0, dtype=str, keep_default_na=False) -> pd.Data
             engine=engine,
         )
 
-    # 확장자 우선 처리
     try:
         if name.endswith(".xlsx"):
             return _read_with("openpyxl")
         elif name.endswith(".xls"):
-            # xlrd 필요
             try:
                 return _read_with("xlrd")
             except Exception as e:
@@ -843,7 +842,6 @@ def _read_excel_any(file, header=0, dtype=str, keep_default_na=False) -> pd.Data
                     f"원본 오류: {e}"
                 )
         else:
-            # 확장자 미상: generic → openpyxl → xlrd 순
             try:
                 return _read_with(None)
             except Exception:
@@ -859,12 +857,9 @@ def _read_excel_any(file, header=0, dtype=str, keep_default_na=False) -> pd.Data
                             f"원본 오류: {e}"
                         )
     except RuntimeError:
-        # 위에서 만든 친절한 메시지는 그대로 전달
         raise
     except Exception as e:
-        # 예기치 않은 케이스
         raise RuntimeError(f"엑셀 파일을 읽는 중 알 수 없는 오류: {e}")
-
 
 
 st.markdown("## 🚚 송장등록")
@@ -872,30 +867,43 @@ st.markdown("## 🚚 송장등록")
 with st.expander("동작 요약", expanded=False):
     st.markdown(
         """
-        - **분류 규칙**  
-          1) 주문번호에 **`LO`** 포함 → **라스트오더(라오)**  
-          2) 그 외에서 주문번호 길이 **16자리(예: `2025082220521651`)** → **스마트스토어**  
-        - **라오 출력**: 별도 템플릿 업로드 없이, 고정 컬럼  
-          **[`주문번호`, `택배사코드(06)`, `송장번호`]** 로 **라오 송장 완성.xlsx** 생성  
-        - **스마트스토어 출력**: 스마트스토어 주문 파일을 업로드하면  
-          주문번호 기준으로 **송장번호**를 **추가/갱신**하여 **스마트스토어 송장 완성.xlsx** 생성
+        - **분류 규칙**
+          1) 주문번호에 **`LO`** 포함 → **라스트오더(라오)**
+          2) 숫자 **16자리(예: `2025082220521651`)** → **스마트스토어**
+          3) **쿠팡 패턴** `^\d{12}LOG\d{5}$` (예: `250822113333LOG16970`) → **쿠팡**
+        - **라오 출력**: 템플릿 업로드 없이 고정 컬럼  
+          **[`주문번호`, `택배사코드(06)`, `송장번호`]** → **라오 송장 완성.xlsx**
+        - **스마트스토어/쿠팡 출력**: 각각의 주문 파일을(선택) 업로드하면  
+          **주문번호 매칭으로 송장번호를 추가/갱신**하여 결과 파일 생성
         """
     )
 
-# 고정 라오 송장 출력 컬럼
-LAO_FIXED_TEMPLATE_COLUMNS = ["주문번호","택배사코드","송장번호" ]
+# 🔒 라오 고정 컬럼 (요청 순서 반영)
+LAO_FIXED_TEMPLATE_COLUMNS = ["주문번호", "택배사코드", "송장번호"]
 
+# 업로드
 st.subheader("1) 파일 업로드")
 invoice_file = st.file_uploader("송장번호 포함 파일 업로드 (예: 송장파일.xls)", type=["xls", "xlsx"], key="inv_file")
 ss_order_file = st.file_uploader("스마트스토어 주문 파일 업로드 (선택)", type=["xlsx"], key="inv_ss_orders")
+cp_order_file = st.file_uploader("쿠팡 주문 파일 업로드 (선택)", type=["xlsx"], key="inv_cp_orders")
 
 run_invoice = st.button("송장등록 실행")
 
-# 헤더 후보 (송장파일/SS파일에서 사용할 키워드)
+# 헤더 후보
 ORDER_KEYS_INVOICE   = ["주문번호", "주문ID", "주문코드", "주문번호1"]
 TRACKING_KEYS        = ["송장번호", "운송장번호", "운송장", "등기번호", "운송장 번호", "송장번호1"]
-SS_ORDER_KEYS        = ["주문번호"]               # SS 주문 파일에서 주문번호 찾기
-SS_TRACKING_COL_NAME = "송장번호"                 # SS 결과에 추가/갱신할 컬럼명 (없으면 생성)
+
+SS_ORDER_KEYS        = ["주문번호"]
+SS_TRACKING_COL_NAME = "송장번호"
+
+CP_ORDER_KEYS        = ["주문번호", "쿠팡주문번호"]
+CP_TRACKING_CANDS    = ["운송장번호", "송장번호", "운송장 번호"]  # 존재하면 우선 사용
+CP_TRACKING_DEFAULT  = "운송장번호"  # 없으면 이 이름으로 생성
+
+# 쿠팡 주문번호 패턴: 12자리 숫자 + 'LOG' + 5자리 숫자 (총 20자)
+COUPANG_ORDER_REGEX = re.compile(r"^\d{12}LOG\d{5}$", re.IGNORECASE)
+
+from typing import Optional
 
 def build_order_tracking_map(df_invoice: pd.DataFrame):
     """송장파일에서 (주문번호 → 송장번호) 매핑 생성"""
@@ -903,10 +911,8 @@ def build_order_tracking_map(df_invoice: pd.DataFrame):
     tracking_col = find_col(TRACKING_KEYS, df_invoice)
     orders = df_invoice[order_col].astype(str)
     tracks = df_invoice[tracking_col].astype(str)
-    # 'nan' 문자열 방지
     orders = orders.where(orders.str.lower() != "nan", "")
     tracks = tracks.where(tracks.str.lower() != "nan", "")
-    # 중복 주문번호는 마지막 값 우선
     mapping = {}
     for o, t in zip(orders, tracks):
         if o and t:
@@ -914,16 +920,22 @@ def build_order_tracking_map(df_invoice: pd.DataFrame):
     return mapping
 
 def classify_orders(mapping: dict):
-    """분류: LO 포함 → 라오 / 길이 16 → 스마트스토어"""
-    lao = {}
-    ss = {}
+    """
+    분류 우선순위 중요:
+      1) 쿠팡 패턴(^\d{12}LOG\d{5}$)
+      2) LO 포함 → 라오
+      3) 16자리 숫자 → 스마트스토어
+    """
+    lao, ss, cp = {}, {}, {}
     for o, t in mapping.items():
-        o_str = str(o)
-        if "LO" in o_str.upper():
+        o_str = str(o).strip()
+        if COUPANG_ORDER_REGEX.fullmatch(o_str):
+            cp[o_str] = t
+        elif "LO" in o_str.upper():
             lao[o_str] = t
-        elif len(o_str.strip()) == 16:  # 자리수 기준
+        elif len(o_str) == 16 and o_str.isdigit():
             ss[o_str] = t
-    return lao, ss
+    return lao, ss, cp
 
 def make_lao_invoice_df_fixed(lao_map: dict) -> pd.DataFrame:
     """라오 송장: 고정 컬럼으로 DF 생성 (택배사코드=06)"""
@@ -931,43 +943,73 @@ def make_lao_invoice_df_fixed(lao_map: dict) -> pd.DataFrame:
         return pd.DataFrame(columns=LAO_FIXED_TEMPLATE_COLUMNS)
     orders = list(lao_map.keys())
     tracks = [lao_map[o] for o in orders]
-    out = pd.DataFrame({
-        "주문번호": orders,
-        "택배사코드": ["06"] * len(orders),  # 고정
-        "송장번호": tracks,
-    }, columns=LAO_FIXED_TEMPLATE_COLUMNS)
+    out = pd.DataFrame(
+        {
+            "주문번호": orders,
+            "택배사코드": ["06"] * len(orders),  # 고정
+            "송장번호": tracks,
+        },
+        columns=LAO_FIXED_TEMPLATE_COLUMNS,
+    )
     return out
-
-from typing import Optional
 
 def make_ss_filled_df(ss_map: dict, ss_df: Optional[pd.DataFrame]) -> pd.DataFrame:
     """스마트스토어 주문 파일에 송장번호를 매칭해 추가/갱신 (SS 파일이 없으면 2열 매핑만 반환)"""
     if ss_df is None or ss_df.empty:
         if not ss_map:
             return pd.DataFrame()
-        return pd.DataFrame({"주문번호": list(ss_map.keys()), "송장번호": list(ss_map.values())})
+        return pd.DataFrame({"주문번호": list(ss_map.keys()), SS_TRACKING_COL_NAME: list(ss_map.values())})
 
-    col_order = find_col(["주문번호"], ss_df)
+    col_order = find_col(SS_ORDER_KEYS, ss_df)
     out = ss_df.copy()
+    if SS_TRACKING_COL_NAME not in out.columns:
+        out[SS_TRACKING_COL_NAME] = ""
 
-    # 결과 컬럼 보장
-    if "송장번호" not in out.columns:
-        out["송장번호"] = ""
+    existing = out[SS_TRACKING_COL_NAME].astype(str)
+    is_empty = (existing.str.lower().eq("nan")) | (existing.str.strip().eq(""))
+    mapped = out[col_order].astype(str).map(ss_map).fillna("")
+    out.loc[is_empty, SS_TRACKING_COL_NAME] = mapped[is_empty]
+    return out
+
+def _pick_existing_col(df: pd.DataFrame, candidates: list[str], default_name: str) -> str:
+    """후보 중 존재하는 컬럼명을 우선 사용, 없으면 default_name 생성"""
+    norm_cols = {norm_header(c): c for c in df.columns}
+    for c in candidates:
+        nh = norm_header(c)
+        if nh in norm_cols:
+            return norm_cols[nh]
+    if default_name not in df.columns:
+        df[default_name] = ""
+    return default_name
+
+def make_cp_filled_df(cp_map: dict, cp_df: Optional[pd.DataFrame]) -> pd.DataFrame:
+    """쿠팡 주문 파일에 운송장번호(또는 송장번호)를 매칭해 추가/갱신 (파일 없으면 2열 매핑 반환)"""
+    if cp_df is None or cp_df.empty:
+        if not cp_map:
+            return pd.DataFrame()
+        # 파일이 없으면 2열(주문번호/운송장번호)만 반환
+        return pd.DataFrame({"주문번호": list(cp_map.keys()), CP_TRACKING_DEFAULT: list(cp_map.values())})
+
+    col_order = find_col(CP_ORDER_KEYS, cp_df)
+    out = cp_df.copy()
+
+    # 결과 컬럼명 결정(있는 후보 우선, 없으면 '운송장번호' 생성)
+    tracking_col = _pick_existing_col(out, CP_TRACKING_CANDS, CP_TRACKING_DEFAULT)
 
     # 기존값이 비어있는 곳만 채움
-    existing = out["송장번호"].astype(str)
+    existing = out[tracking_col].astype(str)
     is_empty = (existing.str.lower().eq("nan")) | (existing.str.strip().eq(""))
 
-    mapped = out[col_order].astype(str).map(ss_map).fillna("")
-    out.loc[is_empty, "송장번호"] = mapped[is_empty]
-
+    mapped = out[col_order].astype(str).map(cp_map).fillna("")
+    out.loc[is_empty, tracking_col] = mapped[is_empty]
     return out
+
 
 if run_invoice:
     if not invoice_file:
         st.error("송장번호가 포함된 송장파일을 업로드해 주세요. (예: 송장파일.xls)")
     else:
-        # 송장파일 읽기 (.xls/.xlsx 모두 지원)
+        # 송장파일 읽기
         try:
             df_invoice = _read_excel_any(invoice_file, header=0, dtype=str, keep_default_na=False)
         except Exception as e:
@@ -983,25 +1025,37 @@ if run_invoice:
                 st.warning(f"스마트스토어 주문 파일을 읽는 중 오류: {e}")
                 df_ss_orders = None
 
+        # (선택) 쿠팡 주문 파일
+        df_cp_orders = None
+        if cp_order_file:
+            try:
+                df_cp_orders = read_first_sheet_source_as_text(cp_order_file)
+            except Exception as e:
+                st.warning(f"쿠팡 주문 파일을 읽는 중 오류: {e}")
+                df_cp_orders = None
+
         if df_invoice is not None:
             try:
-                # 1) (주문번호 → 송장번호) 매핑 만들고 분류
+                # 1) 매핑 생성 & 분류
                 order_track_map = build_order_tracking_map(df_invoice)
-                lao_map, ss_map = classify_orders(order_track_map)
+                lao_map, ss_map, cp_map = classify_orders(order_track_map)
 
-                # 2) 라오/스마트스토어 출력 DF 생성
-                lao_out_df = make_lao_invoice_df_fixed(lao_map)           # 🔒 고정 포맷
-                ss_out_df  = make_ss_filled_df(ss_map, df_ss_orders)
+                # 2) 각 플랫폼 결과 DF
+                lao_out_df = make_lao_invoice_df_fixed(lao_map)      # 라오: 고정 포맷
+                ss_out_df  = make_ss_filled_df(ss_map, df_ss_orders) # 스마트스토어: 주문파일 매칭
+                cp_out_df  = make_cp_filled_df(cp_map, df_cp_orders) # 쿠팡: 주문파일 매칭
 
                 # 3) 미리보기 + 다운로드
-                st.success(f"분류 완료: 라오 {len(lao_map)}건 / 스마트스토어 {len(ss_map)}건")
+                st.success(f"분류 완료: 라오 {len(lao_map)}건 / 스마트스토어 {len(ss_map)}건 / 쿠팡 {len(cp_map)}건")
 
                 with st.expander("라오 송장 미리보기", expanded=True):
                     st.dataframe(lao_out_df.head(50))
                 with st.expander("스마트스토어 송장 미리보기", expanded=False):
                     st.dataframe(ss_out_df.head(50))
+                with st.expander("쿠팡 송장 미리보기", expanded=False):
+                    st.dataframe(cp_out_df.head(50))
 
-                # 라오 송장 완성.xlsx (고정 헤더)
+                # 라오 송장 완성.xlsx
                 buf_lao = io.BytesIO()
                 with pd.ExcelWriter(buf_lao, engine="openpyxl") as writer:
                     lao_out_df.to_excel(writer, index=False)
@@ -1023,8 +1077,21 @@ if run_invoice:
                         file_name="스마트스토어 송장 완성.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     )
-                else:
-                    st.info("스마트스토어 대상 건이 없거나, 매칭할 주문 파일이 없어 생성 결과가 없습니다.")
+
+                # 쿠팡 송장 완성.xlsx
+                if not cp_out_df.empty:
+                    buf_cp = io.BytesIO()
+                    with pd.ExcelWriter(buf_cp, engine="openpyxl") as writer:
+                        cp_out_df.to_excel(writer, index=False)
+                    st.download_button(
+                        label="쿠팡 송장 완성.xlsx 다운로드",
+                        data=buf_cp.getvalue(),
+                        file_name="쿠팡 송장 완성.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    )
+
+                if ss_out_df.empty and cp_out_df.empty:
+                    st.info("스마트스토어/쿠팡 대상 건이 없거나, 매칭할 주문 파일이 없어 생성 결과가 없습니다.")
 
             except Exception as e:
                 st.exception(RuntimeError(f"송장등록 처리 중 오류: {e}"))
