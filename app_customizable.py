@@ -265,19 +265,18 @@ if run_laora:
                     st.success(f"라오라 변환 완료: 총 {len(result)}행")
                     st.dataframe(result.head(50))
 
-                    buffer = io.BytesIO()
-                    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-                        out_df = result[template_columns + [c for c in result.columns if c not in template_columns]]
-                        out_df.to_excel(writer, index=False)
+                   buffer = io.BytesIO()
+with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+    out_df = result[template_columns + [c for c in result.columns if c not in template_columns]]
+    out_df.to_excel(writer, index=False)
 
-                    ts = datetime.now().strftime("%Y%m%d_%H%M%S")    
-                    st.download_button(
-                        label="라오라 변환 결과 다운로드 (라오 3pl발주용_{ts}.xlsx)",
-                        data=buffer.getvalue(),
-                        file_name="라오 3pl발주용_{ts}.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    )
-
+ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+st.download_button(
+    label=f"라오라 변환 결과 다운로드 (라오 3pl발주용_{ts}.xlsx)",
+    data=buffer.getvalue(),
+    file_name=f"라오 3pl발주용_{ts}.xlsx",
+    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+)
 st.markdown("---")
 
 # ======================================================================
@@ -363,7 +362,7 @@ if run_coupang:
                     data=buffer_cp.getvalue(),
                     file_name="쿠팡 3pl발주용_{ts}.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                )
+)
 
 st.markdown("---")
 
