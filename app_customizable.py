@@ -883,7 +883,7 @@ with st.expander("동작 요약", expanded=False):
     )
 
 # 고정 라오 송장 출력 컬럼
-LAO_FIXED_TEMPLATE_COLUMNS = ["주문번호", "송장번호", "택배사코드"]
+LAO_FIXED_TEMPLATE_COLUMNS = ["주문번호","택배사코드","송장번호" ]
 
 st.subheader("1) 파일 업로드")
 invoice_file = st.file_uploader("송장번호 포함 파일 업로드 (예: 송장파일.xls)", type=["xls", "xlsx"], key="inv_file")
