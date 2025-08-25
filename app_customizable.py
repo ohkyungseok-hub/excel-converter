@@ -791,28 +791,27 @@ with st.expander("동작 요약", expanded=False):
         - **분류 규칙**  
           1) 주문번호에 **`LO`** 포함 → **라스트오더(라오)**  
           2) 그 외에서 주문번호 길이 **16자리(예: `2025082220521651`)** → **스마트스토어**  
-        - **라오 출력**: 업로드한 **라오송장.xlsx** 헤더를 자동 인식하여  
-          **주문번호 / 송장번호 / 택배사코드(항상 `06`)** 를 채워 **라오 송장 완성.xlsx** 생성  
+        - **라오 출력**: 별도 템플릿 업로드 없이, 고정 컬럼  
+          **[`주문번호`, `송장번호`, `택배사코드(06)`]** 로 **라오 송장 완성.xlsx** 생성  
         - **스마트스토어 출력**: 스마트스토어 주문 파일을 업로드하면  
           주문번호 기준으로 **송장번호**를 **추가/갱신**하여 **스마트스토어 송장 완성.xlsx** 생성
         """
     )
 
+# 고정 라오 송장 출력 컬럼
+LAO_FIXED_TEMPLATE_COLUMNS = ["주문번호", "송장번호", "택배사코드"]
+
 st.subheader("1) 파일 업로드")
 invoice_file = st.file_uploader("송장번호 포함 파일 업로드 (예: 송장파일.xls)", type=["xls", "xlsx"], key="inv_file")
-lao_tpl_file = st.file_uploader("라오 송장 템플릿 업로드 (라오송장.xlsx)", type=["xlsx"], key="inv_lao_tpl")
 ss_order_file = st.file_uploader("스마트스토어 주문 파일 업로드 (선택)", type=["xlsx"], key="inv_ss_orders")
 
 run_invoice = st.button("송장등록 실행")
 
-# 헤더 후보
+# 헤더 후보 (송장파일/SS파일에서 사용할 키워드)
 ORDER_KEYS_INVOICE   = ["주문번호", "주문ID", "주문코드", "주문번호1"]
 TRACKING_KEYS        = ["송장번호", "운송장번호", "운송장", "등기번호", "운송장 번호", "송장번호1"]
-LAO_ORDER_KEYS       = ["주문번호"]  # 라오 템플릿에서 주문번호 찾기
-LAO_TRACKING_KEYS    = ["송장번호", "운송장번호", "운송장"]
-LAO_COURIER_KEYS     = ["택배사코드", "택배사 코드", "택배사"]
-SS_ORDER_KEYS        = ["주문번호"]  # SS 주문 파일에서 주문번호 찾기
-SS_TRACKING_COL_NAME = "송장번호"     # SS 결과에 추가/갱신할 컬럼명 (없으면 생성)
+SS_ORDER_KEYS        = ["주문번호"]               # SS 주문 파일에서 주문번호 찾기
+SS_TRACKING_COL_NAME = "송장번호"                 # SS 결과에 추가/갱신할 컬럼명 (없으면 생성)
 
 def build_order_tracking_map(df_invoice: pd.DataFrame):
     """송장파일에서 (주문번호 → 송장번호) 매핑 생성"""
@@ -820,7 +819,7 @@ def build_order_tracking_map(df_invoice: pd.DataFrame):
     tracking_col = find_col(TRACKING_KEYS, df_invoice)
     orders = df_invoice[order_col].astype(str)
     tracks = df_invoice[tracking_col].astype(str)
-    # NaN 문자열 방지
+    # 'nan' 문자열 방지
     orders = orders.where(orders.str.lower() != "nan", "")
     tracks = tracks.where(tracks.str.lower() != "nan", "")
     # 중복 주문번호는 마지막 값 우선
@@ -842,46 +841,22 @@ def classify_orders(mapping: dict):
             ss[o_str] = t
     return lao, ss
 
-def make_lao_invoice_df(lao_map: dict, lao_tpl_df: pd.DataFrame):
-    """라오 템플릿 헤더를 유지하여 DataFrame 구성 (택배사코드=06)"""
-    out = pd.DataFrame(index=range(len(lao_map)), columns=list(lao_tpl_df.columns))
-    if len(out) == 0:
-        return out
-
-    # 템플릿 내 컬럼 찾기 (없으면 새로 추가)
-    try:
-        col_order   = find_col(LAO_ORDER_KEYS, lao_tpl_df)
-    except:
-        col_order = "주문번호"
-        if col_order not in out.columns:
-            out[col_order] = ""
-
-    try:
-        col_track   = find_col(LAO_TRACKING_KEYS, lao_tpl_df)
-    except:
-        col_track = "송장번호"
-        if col_track not in out.columns:
-            out[col_track] = ""
-
-    try:
-        col_courier = find_col(LAO_COURIER_KEYS, lao_tpl_df)
-    except:
-        col_courier = "택배사코드"
-        if col_courier not in out.columns:
-            out[col_courier] = ""
-
-    # 값 채우기
+def make_lao_invoice_df_fixed(lao_map: dict) -> pd.DataFrame:
+    """라오 송장: 고정 컬럼으로 DF 생성 (택배사코드=06)"""
+    if not lao_map:
+        return pd.DataFrame(columns=LAO_FIXED_TEMPLATE_COLUMNS)
     orders = list(lao_map.keys())
     tracks = [lao_map[o] for o in orders]
-    out[col_order] = orders
-    out[col_track] = tracks
-    out[col_courier] = "06"  # 고정
+    out = pd.DataFrame({
+        "주문번호": orders,
+        "송장번호": tracks,
+        "택배사코드": ["06"] * len(orders),  # 고정
+    }, columns=LAO_FIXED_TEMPLATE_COLUMNS)
     return out
 
-def make_ss_filled_df(ss_map: dict, ss_df: pd.DataFrame):
-    """스마트스토어 주문 파일에 송장번호를 매칭해 추가/갱신"""
+def make_ss_filled_df(ss_map: dict, ss_df: pd.DataFrame | None):
+    """스마트스토어 주문 파일에 송장번호를 매칭해 추가/갱신 (SS 파일이 없으면 2열 매핑만 반환)"""
     if ss_df is None or ss_df.empty:
-        # SS 파일이 없으면 2열 매핑 파일만 생성
         if not ss_map:
             return pd.DataFrame()
         return pd.DataFrame({"주문번호": list(ss_map.keys()), SS_TRACKING_COL_NAME: list(ss_map.values())})
@@ -890,8 +865,7 @@ def make_ss_filled_df(ss_map: dict, ss_df: pd.DataFrame):
     out = ss_df.copy()
     if SS_TRACKING_COL_NAME not in out.columns:
         out[SS_TRACKING_COL_NAME] = ""
-
-    # 빠른 조회를 위해 map 사용
+    # 주문번호 기준으로 송장번호 채우기(기존값 있으면 유지)
     out[SS_TRACKING_COL_NAME] = out.apply(
         lambda row: ss_map.get(str(row[col_order]), row.get(SS_TRACKING_COL_NAME, "")),
         axis=1
@@ -901,21 +875,15 @@ def make_ss_filled_df(ss_map: dict, ss_df: pd.DataFrame):
 if run_invoice:
     if not invoice_file:
         st.error("송장번호가 포함된 송장파일을 업로드해 주세요. (예: 송장파일.xls)")
-    elif not lao_tpl_file:
-        st.error("라오 송장 템플릿(라오송장.xlsx)을 업로드해 주세요.")
     else:
+        # 송장파일 읽기 (.xls/.xlsx 모두 지원)
         try:
             df_invoice = _read_excel_any(invoice_file, header=0, dtype=str, keep_default_na=False)
         except Exception as e:
             st.exception(RuntimeError(f"송장파일 읽기 오류: {e}"))
             df_invoice = None
 
-        try:
-            df_lao_tpl = read_first_sheet_template(lao_tpl_file)
-        except Exception as e:
-            st.exception(RuntimeError(f"라오 템플릿 읽기 오류: {e}"))
-            df_lao_tpl = None
-
+        # (선택) 스마트스토어 주문 파일
         df_ss_orders = None
         if ss_order_file:
             try:
@@ -924,25 +892,25 @@ if run_invoice:
                 st.warning(f"스마트스토어 주문 파일을 읽는 중 오류: {e}")
                 df_ss_orders = None
 
-        if df_invoice is not None and df_lao_tpl is not None:
+        if df_invoice is not None:
             try:
+                # 1) (주문번호 → 송장번호) 매핑 만들고 분류
                 order_track_map = build_order_tracking_map(df_invoice)
                 lao_map, ss_map = classify_orders(order_track_map)
 
-                # 라오 송장 DataFrame 생성
-                lao_out_df = make_lao_invoice_df(lao_map, df_lao_tpl)
+                # 2) 라오/스마트스토어 출력 DF 생성
+                lao_out_df = make_lao_invoice_df_fixed(lao_map)           # 🔒 고정 포맷
+                ss_out_df  = make_ss_filled_df(ss_map, df_ss_orders)
 
-                # 스마트스토어 송장 DataFrame 생성(주문 파일 제공 시 갱신)
-                ss_out_df = make_ss_filled_df(ss_map, df_ss_orders)
-
-                # 결과 보여주기 + 다운로드
+                # 3) 미리보기 + 다운로드
                 st.success(f"분류 완료: 라오 {len(lao_map)}건 / 스마트스토어 {len(ss_map)}건")
+
                 with st.expander("라오 송장 미리보기", expanded=True):
                     st.dataframe(lao_out_df.head(50))
                 with st.expander("스마트스토어 송장 미리보기", expanded=False):
                     st.dataframe(ss_out_df.head(50))
 
-                # 라오 송장 완성.xlsx
+                # 라오 송장 완성.xlsx (고정 헤더)
                 buf_lao = io.BytesIO()
                 with pd.ExcelWriter(buf_lao, engine="openpyxl") as writer:
                     lao_out_df.to_excel(writer, index=False)
@@ -965,9 +933,7 @@ if run_invoice:
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     )
                 else:
-                    st.info("스마트스토어 대상 건이 없거나, 매칭할 주문 파일이 없어 2열 매핑 파일만 생성 대상이 없습니다.")
+                    st.info("스마트스토어 대상 건이 없거나, 매칭할 주문 파일이 없어 생성 결과가 없습니다.")
 
             except Exception as e:
                 st.exception(RuntimeError(f"송장등록 처리 중 오류: {e}"))
-
-st.caption("라오라 / 쿠팡 / 스마트스토어(키워드) / 떠리몰(S&V) + 송장등록. 다른 양식도 규칙만 알려주시면 바로 넣어드릴게요.")
