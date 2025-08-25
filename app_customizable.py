@@ -783,6 +783,41 @@ st.caption("라오라 / 쿠팡 / 스마트스토어(키워드) / 떠리몰(S&V) 
 # ======================================================================
 # 6) 송장등록: 송장파일(.xls/.xlsx) → 라오/스마트스토어 분류 & 생성
 # ======================================================================
+
+# ---- Add this to your Helpers section ----
+def _read_excel_any(file, header=0, dtype=str, keep_default_na=False) -> pd.DataFrame:
+    """
+    .xlsx/.xls 모두 안전하게 읽기:
+      - 우선 기본 read_excel 시도
+      - 실패 시 확장자 보고 openpyxl(.xlsx) / xlrd(.xls)로 재시도
+    """
+    # 1) 엔진 지정 없이 시도 (환경에 따라 자동 선택)
+    try:
+        return pd.read_excel(file, sheet_name=0, header=header, dtype=dtype, keep_default_na=keep_default_na)
+    except Exception:
+        # 2) 확장자 기준으로 엔진 지정
+        name = getattr(file, "name", "").lower()
+        if name.endswith(".xlsx"):
+            # openpyxl 필요 (이미 의존성 있음)
+            return pd.read_excel(file, sheet_name=0, header=header, dtype=dtype, keep_default_na=keep_default_na, engine="openpyxl")
+        elif name.endswith(".xls"):
+            # xlrd 1.2.0 필요
+            try:
+                return pd.read_excel(file, sheet_name=0, header=header, dtype=dtype, keep_default_na=keep_default_na, engine="xlrd")
+            except Exception as e:
+                raise RuntimeError(
+                    "'.xls' 파일을 읽으려면 xlrd 1.2.0이 필요합니다. "
+                    "터미널에서: pip install 'xlrd==1.2.0'\n"
+                    f"원본 오류: {e}"
+                )
+        else:
+            # 확장자를 모를 때 openpyxl 우선
+            try:
+                return pd.read_excel(file, sheet_name=0, header=header, dtype=dtype, keep_default_na=keep_default_na, engine="openpyxl")
+            except Exception as e:
+                raise RuntimeError(f"엑셀 파일을 읽는 데 실패했습니다: {e}")
+
+
 st.markdown("## 🚚 송장등록")
 
 with st.expander("동작 요약", expanded=False):
