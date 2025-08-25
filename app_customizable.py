@@ -89,7 +89,7 @@ DEFAULT_MAPPING = {
 
 # 쿠팡 고정 매핑 (열 문자) — 주문번호 C
 COUPANG_MAPPING = {
-    "주문번호": "C",
+    "주문번호": "B",
     "받는분 이름": "AA",
     "받는분 주소": "AD",
     "받는분 전화번호": "AB",
@@ -287,7 +287,7 @@ with st.expander("쿠팡 → 템플릿 매핑 보기", expanded=False):
     st.markdown(
         """
         **쿠팡 소스열 → 템플릿 컬럼**  
-        - `C` → **주문번호**  
+        - `B` → **주문번호**  
         - `AA` → **받는분 이름**  
         - `AD` → **받는분 주소**  
         - `AB` → **받는분 전화번호**  
@@ -781,16 +781,13 @@ if run_batch:
 st.caption("라오라 / 쿠팡 / 스마트스토어(키워드) / 떠리몰(S&V) 외 양식도 추가 가능합니다. 규칙만 알려주시면 바로 넣어드릴게요.")
 
 # ======================================================================
-# 6) 송장등록: 송장파일(.xls/.xlsx) → 라오/스마트스토어 분류 & 생성
-# ======================================================================
-
-# ---- Add this to your Helpers section ----
-# ----- REPLACE your helper with this safe version -----
-# ======================================================================
 # 6) 송장등록: 송장파일(.xls/.xlsx) → 라오/스마트스토어/쿠팡 분류 & 생성
 # ======================================================================
 
-# 안전 로더(.xls 지원) — 위 Helpers에 두셔도 됩니다.
+import re
+from typing import Optional, List
+
+# 안전 로더(.xls 지원) — 위 Helpers에 있어도 OK
 def _read_excel_any(file, header=0, dtype=str, keep_default_na=False) -> pd.DataFrame:
     """
     안전한 엑셀 로더 (.xlsx/.xls)
@@ -818,7 +815,7 @@ def _read_excel_any(file, header=0, dtype=str, keep_default_na=False) -> pd.Data
         except Exception:
             data = None
 
-    def _read_with(engine: str | None):
+    def _read_with(engine: Optional[str]):
         bio = io.BytesIO(data) if data is not None else file
         return pd.read_excel(
             bio,
@@ -870,11 +867,10 @@ with st.expander("동작 요약", expanded=False):
         - **분류 규칙**
           1) 주문번호에 **`LO`** 포함 → **라스트오더(라오)**
           2) 숫자 **16자리(예: `2025082220521651`)** → **스마트스토어**
-          3) **쿠팡 패턴** `^\d{12}LOG\d{5}$` (예: `250822113333LOG16970`) → **쿠팡**
+          3) 숫자 **18자리(예: `962239022812385281`)** → **쿠팡**
         - **라오 출력**: 템플릿 업로드 없이 고정 컬럼  
           **[`주문번호`, `택배사코드(06)`, `송장번호`]** → **라오 송장 완성.xlsx**
-        - **스마트스토어/쿠팡 출력**: 각각의 주문 파일을(선택) 업로드하면  
-          **주문번호 매칭으로 송장번호를 추가/갱신**하여 결과 파일 생성
+        - **스마트스토어/쿠팡 출력**: 각 주문 파일(선택 업로드)과 **주문번호 매칭**으로 송장번호 **추가/갱신**
         """
     )
 
@@ -900,10 +896,8 @@ CP_ORDER_KEYS        = ["주문번호", "쿠팡주문번호"]
 CP_TRACKING_CANDS    = ["운송장번호", "송장번호", "운송장 번호"]  # 존재하면 우선 사용
 CP_TRACKING_DEFAULT  = "운송장번호"  # 없으면 이 이름으로 생성
 
-# 쿠팡 주문번호 패턴: 12자리 숫자 + 'LOG' + 5자리 숫자 (총 20자)
-COUPANG_ORDER_REGEX = re.compile(r"^\d{12}LOG\d{5}$", re.IGNORECASE)
-
-from typing import Optional
+# 쿠팡 주문번호: 18자리 순수 숫자
+COUPANG_ORDER_REGEX = re.compile(r"^\d{18}$")
 
 def build_order_tracking_map(df_invoice: pd.DataFrame):
     """송장파일에서 (주문번호 → 송장번호) 매핑 생성"""
@@ -921,20 +915,20 @@ def build_order_tracking_map(df_invoice: pd.DataFrame):
 
 def classify_orders(mapping: dict):
     """
-    분류 우선순위 중요:
-      1) 쿠팡 패턴(^\d{12}LOG\d{5}$)
-      2) LO 포함 → 라오
-      3) 16자리 숫자 → 스마트스토어
+    분류 우선순위:
+      1) 쿠팡: 18자리 숫자
+      2) 라오: 'LO' 포함
+      3) 스마트스토어: 16자리 숫자
     """
     lao, ss, cp = {}, {}, {}
     for o, t in mapping.items():
-        o_str = str(o).strip()
-        if COUPANG_ORDER_REGEX.fullmatch(o_str):
-            cp[o_str] = t
-        elif "LO" in o_str.upper():
-            lao[o_str] = t
-        elif len(o_str) == 16 and o_str.isdigit():
-            ss[o_str] = t
+        s = str(o).strip()
+        if COUPANG_ORDER_REGEX.fullmatch(s):            # 18자리 숫자 → 쿠팡
+            cp[s] = t
+        elif "LO" in s.upper():                          # 'LO' 포함 → 라오
+            lao[s] = t
+        elif len(s) == 16 and s.isdigit():               # 16자리 숫자 → 스마트스토어
+            ss[s] = t
     return lao, ss, cp
 
 def make_lao_invoice_df_fixed(lao_map: dict) -> pd.DataFrame:
@@ -952,6 +946,17 @@ def make_lao_invoice_df_fixed(lao_map: dict) -> pd.DataFrame:
         columns=LAO_FIXED_TEMPLATE_COLUMNS,
     )
     return out
+
+def _pick_existing_col(df: pd.DataFrame, candidates: List[str], default_name: str) -> str:
+    """후보 중 존재하는 컬럼명을 우선 사용, 없으면 default_name 생성"""
+    norm_cols = {norm_header(c): c for c in df.columns}
+    for c in candidates:
+        nh = norm_header(c)
+        if nh in norm_cols:
+            return norm_cols[nh]
+    if default_name not in df.columns:
+        df[default_name] = ""
+    return default_name
 
 def make_ss_filled_df(ss_map: dict, ss_df: Optional[pd.DataFrame]) -> pd.DataFrame:
     """스마트스토어 주문 파일에 송장번호를 매칭해 추가/갱신 (SS 파일이 없으면 2열 매핑만 반환)"""
@@ -971,17 +976,6 @@ def make_ss_filled_df(ss_map: dict, ss_df: Optional[pd.DataFrame]) -> pd.DataFra
     out.loc[is_empty, SS_TRACKING_COL_NAME] = mapped[is_empty]
     return out
 
-def _pick_existing_col(df: pd.DataFrame, candidates: list[str], default_name: str) -> str:
-    """후보 중 존재하는 컬럼명을 우선 사용, 없으면 default_name 생성"""
-    norm_cols = {norm_header(c): c for c in df.columns}
-    for c in candidates:
-        nh = norm_header(c)
-        if nh in norm_cols:
-            return norm_cols[nh]
-    if default_name not in df.columns:
-        df[default_name] = ""
-    return default_name
-
 def make_cp_filled_df(cp_map: dict, cp_df: Optional[pd.DataFrame]) -> pd.DataFrame:
     """쿠팡 주문 파일에 운송장번호(또는 송장번호)를 매칭해 추가/갱신 (파일 없으면 2열 매핑 반환)"""
     if cp_df is None or cp_df.empty:
@@ -999,7 +993,6 @@ def make_cp_filled_df(cp_map: dict, cp_df: Optional[pd.DataFrame]) -> pd.DataFra
     # 기존값이 비어있는 곳만 채움
     existing = out[tracking_col].astype(str)
     is_empty = (existing.str.lower().eq("nan")) | (existing.str.strip().eq(""))
-
     mapped = out[col_order].astype(str).map(cp_map).fillna("")
     out.loc[is_empty, tracking_col] = mapped[is_empty]
     return out
