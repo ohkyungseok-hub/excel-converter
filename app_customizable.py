@@ -876,7 +876,7 @@ with st.expander("동작 요약", expanded=False):
           1) 주문번호에 **`LO`** 포함 → **라스트오더(라오)**  
           2) 그 외에서 주문번호 길이 **16자리(예: `2025082220521651`)** → **스마트스토어**  
         - **라오 출력**: 별도 템플릿 업로드 없이, 고정 컬럼  
-          **[`주문번호`, `송장번호`, `택배사코드(06)`]** 로 **라오 송장 완성.xlsx** 생성  
+          **[`주문번호`, `택배사코드(06)`, `송장번호`]** 로 **라오 송장 완성.xlsx** 생성  
         - **스마트스토어 출력**: 스마트스토어 주문 파일을 업로드하면  
           주문번호 기준으로 **송장번호**를 **추가/갱신**하여 **스마트스토어 송장 완성.xlsx** 생성
         """
@@ -933,8 +933,8 @@ def make_lao_invoice_df_fixed(lao_map: dict) -> pd.DataFrame:
     tracks = [lao_map[o] for o in orders]
     out = pd.DataFrame({
         "주문번호": orders,
-        "송장번호": tracks,
         "택배사코드": ["06"] * len(orders),  # 고정
+        "송장번호": tracks,
     }, columns=LAO_FIXED_TEMPLATE_COLUMNS)
     return out
 
