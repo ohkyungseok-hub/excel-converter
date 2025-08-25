@@ -363,26 +363,30 @@ st.markdown("---")
 # ======================================================================
 # 3) 스마트스토어 파일 변환 (고정 매핑: 열 문자)
 # ======================================================================
-st.markdown("## 스마트스토어 파일 변환 (고정 매핑: 열 문자)")
+st.markdown("## 스마트스토어 파일 변환 (키워드 매핑)")
 
-with st.expander("스마트스토어(고정) → 템플릿 매핑 보기", expanded=False):
+with st.expander("스마트스토어(키워드) → 템플릿 매핑 보기", expanded=False):
     st.markdown(
         """
-        **스마트스토어 소스열 → 템플릿 컬럼**  
-        - `B` → **주문번호**  
-        - `L` → **받는분 이름** (수취인명)  
-        - `AP` → **받는분 주소** (통합배송지)  
-        - `AN` → **받는분 전화번호** (수취인연락처)  
-        - `Q & S` → **상품명** (두 열을 그대로 연결)  
-        - `U` → **수량**  
-        - `AU` → **메모** (배송메시지)
+        **스마트스토어 컬럼명(헤더) → 템플릿 컬럼**  
+        - `주문번호` → **주문번호**  
+        - `수취인명` → **받는분 이름**  
+        - `통합배송지` → **받는분 주소**  
+        - `수취인연락처1` → **받는분 전화번호**  
+        - `=상품명&옵션정보` → **상품명** (두 값을 그대로 연결)  
+        - `수량` → **수량**  
+        - `배송메세지` → **메모**  (※ 일부 파일은 `배송메시지` 표기)
         """
     )
 
-st.subheader("스마트스토어 소스 파일 업로드 (고정 매핑)")
-src_file_ss_fixed = st.file_uploader("스마트스토어 형식의 파일 업로드 (예: 스마트스토어.xlsx)", type=["xlsx"], key="src_smartstore_fixed")
+st.subheader("스마트스토어 소스 파일 업로드 (키워드 매핑)")
+src_file_ss_fixed = st.file_uploader(
+    "스마트스토어 형식의 파일 업로드 (예: 스마트스토어.xlsx)",
+    type=["xlsx"],
+    key="src_smartstore_fixed",
+)
 
-run_ss_fixed = st.button("스마트스토어 변환 실행 (고정 매핑)")
+run_ss_fixed = st.button("스마트스토어 변환 실행 (키워드 매핑)")
 if run_ss_fixed:
     if not src_file_ss_fixed:
         st.error("스마트스토어 소스 파일을 업로드해 주세요.")
@@ -390,62 +394,102 @@ if run_ss_fixed:
         st.error("유효한 템플릿이 필요합니다.")
     else:
         try:
-            df_ss_fixed = read_first_sheet_source_as_text(src_file_ss_fixed)
+            df_ss = read_first_sheet_source_as_text(src_file_ss_fixed)
         except Exception as e:
             st.exception(RuntimeError(f"스마트스토어 소스 파일을 읽는 중 오류: {e}"))
         else:
-            result_ss_fixed = pd.DataFrame(index=range(len(df_ss_fixed)), columns=template_columns)
+            # ---- 키워드 매핑 유틸 ----
+            def _norm(s: str) -> str:
+                # 소문자, 공백/탭 제거, 괄호·콜론 등 일반 구분문자 제거
+                return re.sub(r"[\s\(\)\[\]{}:：/\\\-]", "", str(s).strip().lower())
 
-            src_cols_by_index_ss = list(df_ss_fixed.columns)
+            norm_cols = {_norm(c): c for c in df_ss.columns}  # 정규화명 → 실제열명
 
-            def resolve(letter: str) -> str:
-                idx = excel_col_to_index(letter)
-                if idx >= len(src_cols_by_index_ss):
-                    raise IndexError(
-                        f"스마트스토어 소스에 {letter} 열(0-based index {idx})이 없습니다. "
-                        f"소스 컬럼 수: {len(src_cols_by_index_ss)}"
-                    )
-                return src_cols_by_index_ss[idx]
+            def find_col(preferred_names):
+                """
+                preferred_names: 우선순위가 높은 후보 문자열들의 리스트.
+                1) 완전 일치(정규화) → 2) 포함 매칭(정규화) 순으로 탐색.
+                """
+                candidates_norm = [_norm(x) for x in preferred_names]
+                # 1) 완전 일치
+                for n in candidates_norm:
+                    if n in norm_cols:
+                        return norm_cols[n]
+                # 2) 포함 매칭(예: '배송메세지' vs '배송메세지(판매자)')
+                for want in candidates_norm:
+                    hits = [orig for k, orig in norm_cols.items() if want in k]
+                    if hits:
+                        # 가장 짧은(가장 깔끔한) 헤더명을 우선
+                        return sorted(hits, key=len)[0]
+                raise KeyError(f"해당 키워드에 맞는 컬럼을 찾을 수 없습니다: {preferred_names}")
 
+            # ---- 키워드 사전 ----
+            # 사용자가 명시한 기본 키워드를 최우선으로, 흔한 변형을 보조 키워드로 둠
+            NAME_MAP = {
+                "주문번호": ["주문번호"],
+                "받는분 이름": ["수취인명"],
+                "받는분 주소": ["통합배송지"],
+                "받는분 전화번호": ["수취인연락처1", "수취인연락처", "수취인휴대폰", "연락처1"],
+                "상품명_left": ["상품명"],
+                "상품명_right": ["옵션정보", "옵션명", "옵션내용"],
+                "수량": ["수량", "구매수량"],
+                "메모": ["배송메세지", "배송메시지", "배송요청사항"],
+            }
+
+            # ---- 컬럼 해석 ----
             try:
-                col_order = resolve(SMARTSTORE_FIXED_LETTER_MAPPING["주문번호"])
-                col_name  = resolve(SMARTSTORE_FIXED_LETTER_MAPPING["받는분 이름"])
-                col_addr  = resolve(SMARTSTORE_FIXED_LETTER_MAPPING["받는분 주소"])
-                col_phone = resolve(SMARTSTORE_FIXED_LETTER_MAPPING["받는분 전화번호"])
-                col_q     = resolve(SMARTSTORE_FIXED_LETTER_MAPPING["상품명_Q"])
-                col_s     = resolve(SMARTSTORE_FIXED_LETTER_MAPPING["상품명_S"])
-                col_qty   = resolve(SMARTSTORE_FIXED_LETTER_MAPPING["수량"])
-                col_memo  = resolve(SMARTSTORE_FIXED_LETTER_MAPPING["메모"])
+                col_order = find_col(NAME_MAP["주문번호"])
+                col_name  = find_col(NAME_MAP["받는분 이름"])
+                col_addr  = find_col(NAME_MAP["받는분 주소"])
+                col_phone = find_col(NAME_MAP["받는분 전화번호"])
+                col_prod_l = find_col(NAME_MAP["상품명_left"])
+                col_prod_r = find_col(NAME_MAP["상품명_right"])
+                col_qty   = find_col(NAME_MAP["수량"])
+                col_memo  = find_col(NAME_MAP["메모"])
             except Exception as e:
-                st.exception(RuntimeError(f"스마트스토어 고정 매핑 인덱스 계산 중 오류: {e}"))
+                st.exception(RuntimeError(f"스마트스토어 키워드 매핑 해석 중 오류: {e}"))
             else:
-                result_ss_fixed["주문번호"] = df_ss_fixed[col_order]
-                result_ss_fixed["받는분 이름"] = df_ss_fixed[col_name]
-                result_ss_fixed["받는분 주소"] = df_ss_fixed[col_addr]
-                series_phone = df_ss_fixed[col_phone].astype(str)
-                result_ss_fixed["받는분 전화번호"] = series_phone.where(series_phone.str.lower() != "nan", "")
-                q_series = df_ss_fixed[col_q].astype(str).where(lambda s: s.str.lower() != "nan", "")
-                s_series = df_ss_fixed[col_s].astype(str).where(lambda s: s.str.lower() != "nan", "")
-                result_ss_fixed["상품명"] = q_series.fillna("") + s_series.fillna("")
-                result_ss_fixed["수량"] = pd.to_numeric(df_ss_fixed[col_qty], errors="coerce")
-                result_ss_fixed["메모"] = df_ss_fixed[col_memo]
+                # ---- 결과 채우기 ----
+                result_ss = pd.DataFrame(index=range(len(df_ss)), columns=template_columns)
 
+                result_ss["주문번호"]   = df_ss[col_order]
+                result_ss["받는분 이름"] = df_ss[col_name]
+                result_ss["받는분 주소"] = df_ss[col_addr]
+
+                # 전화번호: 문자열로 처리해 '0' 보존
+                series_phone = df_ss[col_phone].astype(str)
+                result_ss["받는분 전화번호"] = series_phone.where(series_phone.str.lower() != "nan", "")
+
+                # 상품명: "=상품명&옵션정보" 규칙 (둘 중 하나 비어도 자연스럽게 동작)
+                left_raw  = df_ss[col_prod_l].astype(str)
+                right_raw = df_ss[col_prod_r].astype(str)
+                left  = left_raw.where(left_raw.str.lower()  != "nan", "")
+                right = right_raw.where(right_raw.str.lower() != "nan", "")
+                result_ss["상품명"] = (left.fillna("") + right.fillna(""))
+
+                # 수량
+                result_ss["수량"] = pd.to_numeric(df_ss[col_qty], errors="coerce")
+
+                # 메모
+                result_ss["메모"] = df_ss[col_memo]
+
+                # 템플릿 숫자형 정렬(전화번호 제외)
                 for col in template_columns:
                     if col in tpl_df.columns and tpl_df[col].notna().any():
                         if pd.api.types.is_numeric_dtype(tpl_df[col]) and col != "받는분 전화번호":
-                            result_ss_fixed[col] = pd.to_numeric(result_ss_fixed[col], errors="coerce")
+                            result_ss[col] = pd.to_numeric(result_ss[col], errors="coerce")
 
-                st.success(f"스마트스토어(고정) 변환 완료: 총 {len(result_ss_fixed)}행")
-                st.dataframe(result_ss_fixed.head(50))
+                st.success(f"스마트스토어(키워드) 변환 완료: 총 {len(result_ss)}행")
+                st.dataframe(result_ss.head(50))
 
-                buffer_ss_fixed = io.BytesIO()
-                with pd.ExcelWriter(buffer_ss_fixed, engine="openpyxl") as writer:
-                    out_df_ss_fixed = result_ss_fixed[template_columns + [c for c in result_ss_fixed.columns if c not in template_columns]]
-                    out_df_ss_fixed.to_excel(writer, index=False)
+                buffer_ss = io.BytesIO()
+                with pd.ExcelWriter(buffer_ss, engine="openpyxl") as writer:
+                    out_df_ss = result_ss[template_columns + [c for c in result_ss.columns if c not in template_columns]]
+                    out_df_ss.to_excel(writer, index=False)
                 st.download_button(
-                    label="스마트스토어(고정) 변환 결과 다운로드 (output_smartstore_fixed.xlsx)",
-                    data=buffer_ss_fixed.getvalue(),
-                    file_name="output_smartstore_fixed.xlsx",
+                    label="스마트스토어(키워드) 변환 결과 다운로드 (output_smartstore_keywords.xlsx)",
+                    data=buffer_ss.getvalue(),
+                    file_name="output_smartstore_keywords.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 )
 
