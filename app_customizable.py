@@ -269,10 +269,12 @@ if run_laora:
                     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
                         out_df = result[template_columns + [c for c in result.columns if c not in template_columns]]
                         out_df.to_excel(writer, index=False)
+
+                    ts = datetime.now().strftime("%Y%m%d_%H%M%S")    
                     st.download_button(
-                        label="라오라 변환 결과 다운로드 (output_laora.xlsx)",
+                        label="라오라 변환 결과 다운로드 (라오 3pl발주용_{ts}.xlsx)",
                         data=buffer.getvalue(),
-                        file_name="output_laora.xlsx",
+                        file_name="라오 3pl발주용_{ts}.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     )
 
@@ -348,15 +350,18 @@ if run_coupang:
 
                 st.success(f"쿠팡 변환 완료: 총 {len(result_cp)}행")
                 st.dataframe(result_cp.head(50))
-
+                
+                
                 buffer_cp = io.BytesIO()
                 with pd.ExcelWriter(buffer_cp, engine="openpyxl") as writer:
                     out_df_cp = result_cp[template_columns + [c for c in result_cp.columns if c not in template_columns]]
                     out_df_cp.to_excel(writer, index=False)
+
+                ts = datetime.now().strftime("%Y%m%d_%H%M%S")    
                 st.download_button(
-                    label="쿠팡 변환 결과 다운로드 (output_coupang.xlsx)",
+                    label="쿠팡 변환 결과 다운로드 (쿠팡 3pl발주용_{ts}.xlsx)",
                     data=buffer_cp.getvalue(),
-                    file_name="output_coupang.xlsx",
+                    file_name="쿠팡 3pl발주용_{ts}.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 )
 
@@ -454,12 +459,13 @@ if run_ss_fixed:
                 with pd.ExcelWriter(buffer_ss, engine="openpyxl") as writer:
                     out_df_ss = result_ss[template_columns + [c for c in result_ss.columns if c not in template_columns]]
                     out_df_ss.to_excel(writer, index=False)
+                ts = datetime.now().strftime("%Y%m%d_%H%M%S")
                 st.download_button(
-                    label="스마트스토어(키워드) 변환 결과 다운로드 (output_smartstore_keywords.xlsx)",
+                    label=f"스마트스토어 변환 결과 다운로드 (스마트스토어 3pl발주용_{ts}.xlsx)",
                     data=buffer_ss.getvalue(),
-                    file_name="output_smartstore_keywords.xlsx",
+                    file_name=f"스마트스토어 3pl발주용_{ts}.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                )
+)
 
 st.markdown("---")
 
@@ -553,10 +559,12 @@ if run_ttarimall:
                 with pd.ExcelWriter(buffer_tm, engine="openpyxl") as writer:
                     out_df_tm = result_tm[template_columns + [c for c in result_tm.columns if c not in template_columns]]
                     out_df_tm.to_excel(writer, index=False)
+                   
+                ts = datetime.now().strftime("%Y%m%d_%H%M%S")
                 st.download_button(
-                    label="떠리몰(고정) 변환 결과 다운로드 (output_ttarimall.xlsx)",
+                    label=f"떠리몰 변환 결과 다운로드 (떠리몰 3pl발주용_{ts}.xlsx)",
                     data=buffer_tm.getvalue(),
-                    file_name="output_ttarimall.xlsx",
+                    file_name=f"떠리몰 3pl발주용_{ts}.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 )
 
