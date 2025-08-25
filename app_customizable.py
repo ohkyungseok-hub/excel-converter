@@ -1026,8 +1026,7 @@ if run_invoice:
             except Exception as e:
                 st.warning(f"쿠팡 주문 파일을 읽는 중 오류: {e}")
                 df_cp_orders = None
-
-        if df_invoice is not None:
+if df_invoice is not None:
     try:
         # 1) (주문번호 → 송장번호) 매핑 만들고 분류
         order_track_map = build_order_tracking_map(df_invoice)
@@ -1038,7 +1037,7 @@ if run_invoice:
         ss_out_df  = make_ss_filled_df(ss_map, df_ss_orders) # 스마트스토어: 주문파일 매칭
         cp_out_df  = make_cp_filled_df(cp_map, df_cp_orders) # 쿠팡: 묶음배송번호 매칭
 
-        # 3) 미리보기 + 다운로드  (★ 이 부분이 try 블록 안에 있어야 합니다)
+        # 3) 미리보기 + 다운로드 (try 블록 안에 유지)
         st.success(f"분류 완료: 라오 {len(lao_map)}건 / 스마트스토어 {len(ss_map)}건 / 쿠팡 {len(cp_map)}건")
 
         with st.expander("라오 송장 미리보기", expanded=True):
