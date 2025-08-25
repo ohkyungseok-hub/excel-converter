@@ -89,7 +89,7 @@ DEFAULT_MAPPING = {
 
 # 쿠팡 고정 매핑 (열 문자) — 주문번호 C
 COUPANG_MAPPING = {
-    "주문번호": "B",
+    "주문번호": "C",
     "받는분 이름": "AA",
     "받는분 주소": "AD",
     "받는분 전화번호": "AB",
@@ -287,7 +287,7 @@ with st.expander("쿠팡 → 템플릿 매핑 보기", expanded=False):
     st.markdown(
         """
         **쿠팡 소스열 → 템플릿 컬럼**  
-        - `B` → **주문번호**  
+        - `C` → **주문번호**  
         - `AA` → **받는분 이름**  
         - `AD` → **받는분 주소**  
         - `AB` → **받는분 전화번호**  
@@ -784,14 +784,10 @@ st.caption("라오라 / 쿠팡 / 스마트스토어(키워드) / 떠리몰(S&V) 
 # 6) 송장등록: 송장파일(.xls/.xlsx) → 라오/스마트스토어/쿠팡 분류 & 생성
 # ======================================================================
 
-# ======================================================================
-# 6) 송장등록: 송장파일(.xls/.xlsx) → 라오/스마트스토어/쿠팡 분류 & 생성
-# ======================================================================
-
 import re
 from typing import Optional, List
 
-# 안전 로더(.xls 지원) — 위 Helpers에 있어도 OK (중복되면 하나만 두세요)
+# 안전 로더(.xls 지원) — 중복 정의되어 있으면 하나만 남기세요.
 def _read_excel_any(file, header=0, dtype=str, keep_default_na=False) -> pd.DataFrame:
     name = (getattr(file, "name", "") or "").lower()
 
@@ -861,12 +857,12 @@ with st.expander("동작 요약", expanded=False):
           3) 숫자 **18자리(예: `962239022812385281`)** → **쿠팡**
         - **라오 출력**: 템플릿 업로드 없이 고정 컬럼  
           **[`주문번호`, `택배사코드(08)`, `송장번호`]** → **라오 송장 완성.xlsx**
-        - **스마트스토어 출력**: 주문 파일과 **주문번호 매칭** → 송장번호 추가/갱신 (**시트명: 배송처리**)
-        - **쿠팡 출력**: **송장파일의 주문번호** ↔ **쿠팡주문파일의 묶음배송번호** 매칭 → **운송장번호** 채움
+        - **스마트스토어 출력**: 주문 파일과 **주문번호 매칭** → 송장번호 추가/갱신 (**시트명: 배송처리**, `택배사` 기본값=롯데택배)
+        - **쿠팡 출력**: **송장파일의 주문번호** ↔ **쿠팡주문파일의 주문번호** 매칭 → **운송장번호** 채움
         """
     )
 
-# 🔒 라오 고정 컬럼 (요청 순서 반영)
+# 🔒 라오 고정 컬럼 (요청 순서)
 LAO_FIXED_TEMPLATE_COLUMNS = ["주문번호", "택배사코드", "송장번호"]
 
 # 업로드
@@ -884,10 +880,10 @@ TRACKING_KEYS        = ["송장번호", "운송장번호", "운송장", "등기�
 SS_ORDER_KEYS        = ["주문번호"]
 SS_TRACKING_COL_NAME = "송장번호"
 
-# 쿠팡: 묶음배송번호로 매칭 (요청사항)
-CP_GROUP_KEYS        = ["묶음배송번호", "묶음번호", "묶음배송 번호"]   # 쿠팡 주문파일에서 찾을 컬럼
-CP_TRACKING_CANDS    = ["운송장번호", "송장번호", "운송장 번호"]        # 존재하면 우선 사용
-CP_TRACKING_DEFAULT  = "운송장번호"                                    # 없으면 이 이름으로 생성
+# 쿠팡: 주문번호로 매칭
+CP_ORDER_KEYS        = ["주문번호", "쿠팡주문번호"]
+CP_TRACKING_CANDS    = ["운송장번호", "송장번호", "운송장 번호"]  # 존재하면 우선 사용
+CP_TRACKING_DEFAULT  = "운송장번호"                                # 없으면 이 이름으로 생성
 
 # 쿠팡 주문번호: 18자리 순수 숫자
 COUPANG_ORDER_REGEX = re.compile(r"^\d{18}$")
@@ -933,7 +929,7 @@ def make_lao_invoice_df_fixed(lao_map: dict) -> pd.DataFrame:
     out = pd.DataFrame(
         {
             "주문번호": orders,
-            "택배사코드": ["08"] * len(orders),  # 🔁 변경: 06 → 08
+            "택배사코드": ["08"] * len(orders),  # 요청: 06 → 08
             "송장번호": tracks,
         },
         columns=LAO_FIXED_TEMPLATE_COLUMNS,
@@ -956,7 +952,10 @@ def make_ss_filled_df(ss_map: dict, ss_df: Optional[pd.DataFrame]) -> pd.DataFra
     if ss_df is None or ss_df.empty:
         if not ss_map:
             return pd.DataFrame()
-        return pd.DataFrame({"주문번호": list(ss_map.keys()), SS_TRACKING_COL_NAME: list(ss_map.values())})
+        df = pd.DataFrame({"주문번호": list(ss_map.keys()), SS_TRACKING_COL_NAME: list(ss_map.values())})
+        # 택배사 기본값
+        df["택배사"] = "롯데택배"
+        return df
 
     col_order = find_col(SS_ORDER_KEYS, ss_df)
     out = ss_df.copy()
@@ -967,12 +966,21 @@ def make_ss_filled_df(ss_map: dict, ss_df: Optional[pd.DataFrame]) -> pd.DataFra
     is_empty = (existing.str.lower().eq("nan")) | (existing.str.strip().eq(""))
     mapped = out[col_order].astype(str).map(ss_map).fillna("")
     out.loc[is_empty, SS_TRACKING_COL_NAME] = mapped[is_empty]
+
+    # 택배사 기본값=롯데택배 (있으면 비어있는 행만 채움)
+    if "택배사" not in out.columns:
+        out["택배사"] = "롯데택배"
+    else:
+        ser = out["택배사"].astype(str)
+        empty_mask = ser.str.lower().eq("nan") | ser.str.strip().eq("")
+        out.loc[empty_mask, "택배사"] = "롯데택배"
+
     return out
 
 def make_cp_filled_df(cp_map: dict, cp_df: Optional[pd.DataFrame]) -> pd.DataFrame:
     """
     쿠팡 주문 파일에 운송장번호(또는 송장번호)를 매칭해 추가/갱신
-    - 매칭 키: 쿠팡주문파일의 **묶음배송번호** ↔ 송장파일의 **주문번호**
+    - 매칭 키: 쿠팡주문파일의 **주문번호** ↔ 송장파일의 **주문번호**
     - 파일이 없으면 2열 매핑만 반환
     """
     if cp_df is None or cp_df.empty:
@@ -981,8 +989,7 @@ def make_cp_filled_df(cp_map: dict, cp_df: Optional[pd.DataFrame]) -> pd.DataFra
         # 파일이 없으면 2열(주문번호/운송장번호)만 반환
         return pd.DataFrame({"주문번호": list(cp_map.keys()), CP_TRACKING_DEFAULT: list(cp_map.values())})
 
-    # 🔑 묶음배송번호 컬럼 찾기 (요청사항)
-    col_group = find_col(CP_GROUP_KEYS, cp_df)
+    col_order = find_col(CP_ORDER_KEYS, cp_df)
     out = cp_df.copy()
 
     # 결과 컬럼명 결정(있는 후보 우선, 없으면 '운송장번호' 생성)
@@ -992,8 +999,8 @@ def make_cp_filled_df(cp_map: dict, cp_df: Optional[pd.DataFrame]) -> pd.DataFra
     existing = out[tracking_col].astype(str)
     is_empty = (existing.str.lower().eq("nan")) | (existing.str.strip().eq(""))
 
-    # 묶음배송번호 ↔ 주문번호(송장파일)의 매핑
-    mapped = out[col_group].astype(str).map(cp_map).fillna("")
+    # 주문번호 ↔ 주문번호 매핑
+    mapped = out[col_order].astype(str).map(cp_map).fillna("")
     out.loc[is_empty, tracking_col] = mapped[is_empty]
     return out
 
@@ -1039,9 +1046,9 @@ if run_invoice:
                 lao_map, ss_map, cp_map = classify_orders(order_track_map)
 
                 # 결과 DF 생성
-                lao_out_df = make_lao_invoice_df_fixed(lao_map)          # 라오: 택배사코드=08, 컬럼순서 고정
-                ss_out_df  = make_ss_filled_df(ss_map, df_ss_orders)     # 스마트스토어: 주문번호 매칭
-                cp_out_df  = make_cp_filled_df(cp_map, df_cp_orders)     # 쿠팡: 묶음배송번호 ↔ 주문번호 매칭
+                lao_out_df = make_lao_invoice_df_fixed(lao_map)      # 라오: 택배사코드=08, 컬럼순서 고정
+                ss_out_df  = make_ss_filled_df(ss_map, df_ss_orders) # 스마트스토어: 주문번호 매칭(+택배사 기본값)
+                cp_out_df  = make_cp_filled_df(cp_map, df_cp_orders) # 쿠팡: 주문번호 매칭
 
                 # 미리보기
                 st.success(f"분류 완료: 라오 {len(lao_map)}건 / 스마트스토어 {len(ss_map)}건 / 쿠팡 {len(cp_map)}건")
@@ -1055,7 +1062,7 @@ if run_invoice:
                 # 파일명 타임스탬프
                 ts = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-                # 라오 송장 완성.xlsx (주문번호, 택배사코드=08, 송장번호)
+                # 라오 송장 완성.xlsx
                 buf_lao = io.BytesIO()
                 with pd.ExcelWriter(buf_lao, engine="openpyxl") as writer:
                     lao_out_df.to_excel(writer, index=False)
@@ -1066,10 +1073,17 @@ if run_invoice:
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 )
 
-                # 스마트스토어 송장 완성.xlsx — 시트명: 배송처리 / 택배사=롯데택배
+                # 스마트스토어 송장 완성.xlsx — 시트명: 배송처리
                 if not ss_out_df.empty:
                     ss_out_export = ss_out_df.copy()
-                    ss_out_export["택배사"] = "롯데택배"
+                    # (안전) 택배사 기본값 다시 보장
+                    if "택배사" not in ss_out_export.columns:
+                        ss_out_export["택배사"] = "롯데택배"
+                    else:
+                        ser = ss_out_export["택배사"].astype(str)
+                        empty_mask = ser.str.lower().eq("nan") | ser.str.strip().eq("")
+                        ss_out_export.loc[empty_mask, "택배사"] = "롯데택배"
+
                     buf_ss = io.BytesIO()
                     with pd.ExcelWriter(buf_ss, engine="openpyxl") as writer:
                         ss_out_export.to_excel(writer, index=False, sheet_name="배송처리")
