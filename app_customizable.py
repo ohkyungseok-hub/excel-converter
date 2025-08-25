@@ -785,37 +785,86 @@ st.caption("라오라 / 쿠팡 / 스마트스토어(키워드) / 떠리몰(S&V) 
 # ======================================================================
 
 # ---- Add this to your Helpers section ----
+# ----- REPLACE your helper with this safe version -----
 def _read_excel_any(file, header=0, dtype=str, keep_default_na=False) -> pd.DataFrame:
     """
-    .xlsx/.xls 모두 안전하게 읽기:
-      - 우선 기본 read_excel 시도
-      - 실패 시 확장자 보고 openpyxl(.xlsx) / xlrd(.xls)로 재시도
+    안전한 엑셀 로더 (.xlsx/.xls)
+      - 업로드 파일 바이트를 먼저 확보 → BytesIO 로 매 시도마다 새로 읽음(포인터 문제 방지)
+      - .xlsx → openpyxl
+      - .xls  → xlrd (pip install xlrd>=2.0.1)
+      - 확장자 미상/실패시: generic → openpyxl → xlrd 순으로 폴백
     """
-    # 1) 엔진 지정 없이 시도 (환경에 따라 자동 선택)
+    # 업로드 파일명과 바이트 확보
+    name = (getattr(file, "name", "") or "").lower()
+
+    data = None
+    # Streamlit UploadedFile는 getvalue() 지원
+    if hasattr(file, "getvalue"):
+        try:
+            data = file.getvalue()
+        except Exception:
+            data = None
+
+    # 혹시 일반 파일객체라면 read()로 확보
+    if data is None:
+        try:
+            cur = file.tell() if hasattr(file, "tell") else None
+            if hasattr(file, "seek"):
+                file.seek(0)
+            data = file.read()
+            if hasattr(file, "seek") and cur is not None:
+                file.seek(cur)
+        except Exception:
+            data = None
+
+    def _read_with(engine: str | None):
+        bio = io.BytesIO(data) if data is not None else file
+        return pd.read_excel(
+            bio,
+            sheet_name=0,
+            header=header,
+            dtype=dtype,
+            keep_default_na=keep_default_na,
+            engine=engine,
+        )
+
+    # 확장자 우선 처리
     try:
-        return pd.read_excel(file, sheet_name=0, header=header, dtype=dtype, keep_default_na=keep_default_na)
-    except Exception:
-        # 2) 확장자 기준으로 엔진 지정
-        name = getattr(file, "name", "").lower()
         if name.endswith(".xlsx"):
-            # openpyxl 필요 (이미 의존성 있음)
-            return pd.read_excel(file, sheet_name=0, header=header, dtype=dtype, keep_default_na=keep_default_na, engine="openpyxl")
+            return _read_with("openpyxl")
         elif name.endswith(".xls"):
-            # xlrd 1.2.0 필요
+            # xlrd 필요
             try:
-                return pd.read_excel(file, sheet_name=0, header=header, dtype=dtype, keep_default_na=keep_default_na, engine="xlrd")
+                return _read_with("xlrd")
             except Exception as e:
                 raise RuntimeError(
-                    "'.xls' 파일을 읽으려면 xlrd 1.2.0이 필요합니다. "
-                    "터미널에서: pip install 'xlrd==1.2.0'\n"
+                    "'.xls' 파일을 읽으려면 xlrd가 필요합니다. "
+                    "설치: pip install \"xlrd>=2.0.1\"\n"
                     f"원본 오류: {e}"
                 )
         else:
-            # 확장자를 모를 때 openpyxl 우선
+            # 확장자 미상: generic → openpyxl → xlrd 순
             try:
-                return pd.read_excel(file, sheet_name=0, header=header, dtype=dtype, keep_default_na=keep_default_na, engine="openpyxl")
-            except Exception as e:
-                raise RuntimeError(f"엑셀 파일을 읽는 데 실패했습니다: {e}")
+                return _read_with(None)
+            except Exception:
+                try:
+                    return _read_with("openpyxl")
+                except Exception:
+                    try:
+                        return _read_with("xlrd")
+                    except Exception as e:
+                        raise RuntimeError(
+                            "엑셀 파일을 읽을 수 없습니다. "
+                            "(.xlsx는 openpyxl, .xls는 xlrd 필요)\n"
+                            f"원본 오류: {e}"
+                        )
+    except RuntimeError:
+        # 위에서 만든 친절한 메시지는 그대로 전달
+        raise
+    except Exception as e:
+        # 예기치 않은 케이스
+        raise RuntimeError(f"엑셀 파일을 읽는 중 알 수 없는 오류: {e}")
+
 
 
 st.markdown("## 🚚 송장등록")
