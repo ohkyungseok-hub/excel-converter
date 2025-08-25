@@ -1028,66 +1028,69 @@ if run_invoice:
                 df_cp_orders = None
 
         if df_invoice is not None:
-            try:
-                # 1) 매핑 생성 & 분류
-                order_track_map = build_order_tracking_map(df_invoice)
-                lao_map, ss_map, cp_map = classify_orders(order_track_map)
+    try:
+        # 1) (주문번호 → 송장번호) 매핑 만들고 분류
+        order_track_map = build_order_tracking_map(df_invoice)
+        lao_map, ss_map, cp_map = classify_orders(order_track_map)
 
-                # 2) 각 플랫폼 결과 DF
-                lao_out_df = make_lao_invoice_df_fixed(lao_map)      # 라오: 고정 포맷 (택배사코드=08)
-                ss_out_df  = make_ss_filled_df(ss_map, df_ss_orders) # 스마트스토어: 주문파일 매칭
-                cp_out_df  = make_cp_filled_df(cp_map, df_cp_orders) # 쿠팡: 묶음배송번호 매칭
+        # 2) 라오/스마트스토어/쿠팡 출력 DF 생성
+        lao_out_df = make_lao_invoice_df_fixed(lao_map)      # 라오: 택배사코드=08, 컬럼순서 고정
+        ss_out_df  = make_ss_filled_df(ss_map, df_ss_orders) # 스마트스토어: 주문파일 매칭
+        cp_out_df  = make_cp_filled_df(cp_map, df_cp_orders) # 쿠팡: 묶음배송번호 매칭
 
-                # 3) 미리보기 + 다운로드
-st.success(f"분류 완료: 라오 {len(lao_map)}건 / 스마트스토어 {len(ss_map)}건 / 쿠팡 {len(cp_map)}건")
+        # 3) 미리보기 + 다운로드  (★ 이 부분이 try 블록 안에 있어야 합니다)
+        st.success(f"분류 완료: 라오 {len(lao_map)}건 / 스마트스토어 {len(ss_map)}건 / 쿠팡 {len(cp_map)}건")
 
-with st.expander("라오 송장 미리보기", expanded=True):
-    st.dataframe(lao_out_df.head(50))
-with st.expander("스마트스토어 송장 미리보기 (시트명: 배송처리)", expanded=False):
-    st.dataframe(ss_out_df.head(50))
-with st.expander("쿠팡 송장 미리보기", expanded=False):
-    st.dataframe(cp_out_df.head(50))
+        with st.expander("라오 송장 미리보기", expanded=True):
+            st.dataframe(lao_out_df.head(50))
+        with st.expander("스마트스토어 송장 미리보기 (시트명: 배송처리)", expanded=False):
+            st.dataframe(ss_out_df.head(50))
+        with st.expander("쿠팡 송장 미리보기", expanded=False):
+            st.dataframe(cp_out_df.head(50))
 
-# ✅ 파일명에 일자/시간 스탬프 추가
-ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        # 파일명에 일자/시간 스탬프
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-# 라오 송장 완성.xlsx
-buf_lao = io.BytesIO()
-with pd.ExcelWriter(buf_lao, engine="openpyxl") as writer:
-    lao_out_df.to_excel(writer, index=False)
-st.download_button(
-    label="라오 송장 완성.xlsx 다운로드",
-    data=buf_lao.getvalue(),
-    file_name=f"라오 송장 완성_{ts}.xlsx",  # ← 타임스탬프
-    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-)
+        # 라오 송장 완성.xlsx
+        buf_lao = io.BytesIO()
+        with pd.ExcelWriter(buf_lao, engine="openpyxl") as writer:
+            lao_out_df.to_excel(writer, index=False)
+        st.download_button(
+            label="라오 송장 완성.xlsx 다운로드",
+            data=buf_lao.getvalue(),
+            file_name=f"라오 송장 완성_{ts}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
 
-# 스마트스토어 송장 완성.xlsx — 🔖 시트명: 배송처리 / 🔒 택배사 = 롯데택배
-if not ss_out_df.empty:
-    ss_out_df = ss_out_df.copy()
-    ss_out_df["택배사"] = "롯데택배"  # ← 전체 행 통일
+        # 스마트스토어 송장 완성.xlsx — 시트명: 배송처리 / 택배사=롯데택배
+        if not ss_out_df.empty:
+            ss_out_df = ss_out_df.copy()
+            ss_out_df["택배사"] = "롯데택배"
 
-    buf_ss = io.BytesIO()
-    with pd.ExcelWriter(buf_ss, engine="openpyxl") as writer:
-        ss_out_df.to_excel(writer, index=False, sheet_name="배송처리")
-    st.download_button(
-        label="스마트스토어 송장 완성.xlsx 다운로드",
-        data=buf_ss.getvalue(),
-        file_name=f"스마트스토어 송장 완성_{ts}.xlsx",  # ← 타임스탬프
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    )
+            buf_ss = io.BytesIO()
+            with pd.ExcelWriter(buf_ss, engine="openpyxl") as writer:
+                ss_out_df.to_excel(writer, index=False, sheet_name="배송처리")
+            st.download_button(
+                label="스마트스토어 송장 완성.xlsx 다운로드",
+                data=buf_ss.getvalue(),
+                file_name=f"스마트스토어 송장 완성_{ts}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
 
-# 쿠팡 송장 완성.xlsx
-if not cp_out_df.empty:
-    buf_cp = io.BytesIO()
-    with pd.ExcelWriter(buf_cp, engine="openpyxl") as writer:
-        cp_out_df.to_excel(writer, index=False)
-    st.download_button(
-        label="쿠팡 송장 완성.xlsx 다운로드",
-        data=buf_cp.getvalue(),
-        file_name=f"쿠팡 송장 완성_{ts}.xlsx",  # ← 타임스탬프
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    )
+        # 쿠팡 송장 완성.xlsx
+        if not cp_out_df.empty:
+            buf_cp = io.BytesIO()
+            with pd.ExcelWriter(buf_cp, engine="openpyxl") as writer:
+                cp_out_df.to_excel(writer, index=False)
+            st.download_button(
+                label="쿠팡 송장 완성.xlsx 다운로드",
+                data=buf_cp.getvalue(),
+                file_name=f"쿠팡 송장 완성_{ts}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
 
-if ss_out_df.empty and cp_out_df.empty:
-    st.info("스마트스토어/쿠팡 대상 건이 없거나, 매칭할 주문 파일이 없어 생성 결과가 없습니다.")
+        if ss_out_df.empty and cp_out_df.empty:
+            st.info("스마트스토어/쿠팡 대상 건이 없거나, 매칭할 주문 파일이 없어 생성 결과가 없습니다.")
+
+    except Exception as e:
+        st.exception(RuntimeError(f"송장등록 처리 중 오류: {e}"))
