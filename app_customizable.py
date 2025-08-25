@@ -938,26 +938,28 @@ def make_lao_invoice_df_fixed(lao_map: dict) -> pd.DataFrame:
     }, columns=LAO_FIXED_TEMPLATE_COLUMNS)
     return out
 
-ddef make_ss_filled_df(ss_map: dict, ss_df: pd.DataFrame | None):
+from typing import Optional
+
+def make_ss_filled_df(ss_map: dict, ss_df: Optional[pd.DataFrame]) -> pd.DataFrame:
     """스마트스토어 주문 파일에 송장번호를 매칭해 추가/갱신 (SS 파일이 없으면 2열 매핑만 반환)"""
     if ss_df is None or ss_df.empty:
         if not ss_map:
             return pd.DataFrame()
-        return pd.DataFrame({"주문번호": list(ss_map.keys()), SS_TRACKING_COL_NAME: list(ss_map.values())})
+        return pd.DataFrame({"주문번호": list(ss_map.keys()), "송장번호": list(ss_map.values())})
 
-    col_order = find_col(SS_ORDER_KEYS, ss_df)
+    col_order = find_col(["주문번호"], ss_df)
     out = ss_df.copy()
 
     # 결과 컬럼 보장
-    if SS_TRACKING_COL_NAME not in out.columns:
-        out[SS_TRACKING_COL_NAME] = ""
+    if "송장번호" not in out.columns:
+        out["송장번호"] = ""
 
-    # 기존값이 비어있는 위치만 채움
-    existing = out[SS_TRACKING_COL_NAME].astype(str)
+    # 기존값이 비어있는 곳만 채움
+    existing = out["송장번호"].astype(str)
     is_empty = (existing.str.lower().eq("nan")) | (existing.str.strip().eq(""))
 
     mapped = out[col_order].astype(str).map(ss_map).fillna("")
-    out.loc[is_empty, SS_TRACKING_COL_NAME] = mapped[is_empty]
+    out.loc[is_empty, "송장번호"] = mapped[is_empty]
 
     return out
 
