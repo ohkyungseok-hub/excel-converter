@@ -107,13 +107,14 @@ SMARTSTORE_FIXED_LETTER_MAPPING = {
 }
 
 # 떠리몰 고정 매핑 (열 문자)
-# H: 주문번호, AB: 수령자명, AE: 주소, AC: 수령자연락처, V: 옵션명:옵션값(→상품명), Y: 수량, AA: 배송메시지
+# H: 주문번호, AB: 수령자명, AE: 주소, AC: 수령자연락처,
+# S & V: 상품명(규칙: S와 V가 같으면 V만, 다르면 S&V 연결), Y: 수량, AA: 배송메시지
 TTARIMALL_FIXED_LETTER_MAPPING = {
     "주문번호": "H",
     "받는분 이름": "AB",
     "받는분 주소": "AE",
     "받는분 전화번호": "AC",
-    "상품명": "V",
+    "상품명": "V",  # V는 기본, 실제 처리에서 S와 비교 후 결정
     "수량": "Y",
     "메모": "AA",
 }
@@ -463,7 +464,7 @@ with st.expander("떠리몰(고정) → 템플릿 매핑 보기", expanded=False
         - `AB` → **받는분 이름** (수령자명)  
         - `AE` → **받는분 주소** (주소)  
         - `AC` → **받는분 전화번호** (수령자연락처)  
-        - `V` → **상품명** (옵션명:옵션값)  
+        - `S & V` → **상품명** (S와 V가 같으면 V만, 다르면 S&V로 연결)  
         - `Y` → **수량**  
         - `AA` → **메모** (배송메시지)
         """
@@ -502,7 +503,8 @@ if run_ttarimall:
                 col_name  = resolve(TTARIMALL_FIXED_LETTER_MAPPING["받는분 이름"])
                 col_addr  = resolve(TTARIMALL_FIXED_LETTER_MAPPING["받는분 주소"])
                 col_phone = resolve(TTARIMALL_FIXED_LETTER_MAPPING["받는분 전화번호"])
-                col_prod  = resolve(TTARIMALL_FIXED_LETTER_MAPPING["상품명"])
+                col_prod_v  = resolve(TTARIMALL_FIXED_LETTER_MAPPING["상품명"])  # V
+                col_prod_s  = resolve("S")  # ⭐ S 열도 함께 사용
                 col_qty   = resolve(TTARIMALL_FIXED_LETTER_MAPPING["수량"])
                 col_memo  = resolve(TTARIMALL_FIXED_LETTER_MAPPING["메모"])
             except Exception as e:
@@ -515,9 +517,17 @@ if run_ttarimall:
                 # 전화번호: 문자열(0 보존)
                 series_phone = df_tm[col_phone].astype(str)
                 result_tm["받는분 전화번호"] = series_phone.where(series_phone.str.lower() != "nan", "")
-                # 상품명: V열(옵션명:옵션값) 그대로 사용
-                prod_series = df_tm[col_prod].astype(str).where(lambda s: s.str.lower() != "nan", "")
+
+                # 상품명: S와 V가 같으면 V, 다르면 S&V로 연결
+                s_series_raw = df_tm[col_prod_s].astype(str)
+                v_series_raw = df_tm[col_prod_v].astype(str)
+                s_series = s_series_raw.where(s_series_raw.str.lower() != "nan", "")
+                v_series = v_series_raw.where(v_series_raw.str.lower() != "nan", "")
+                same_mask = (s_series == v_series)
+                prod_series = v_series.copy()
+                prod_series.loc[~same_mask] = s_series[~same_mask] + v_series[~same_mask]
                 result_tm["상품명"] = prod_series
+
                 # 수량
                 result_tm["수량"] = pd.to_numeric(df_tm[col_qty], errors="coerce")
                 # 메모
