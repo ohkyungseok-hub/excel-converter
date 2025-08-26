@@ -265,6 +265,7 @@ if run_laora:
 
                     st.success(f"라오라 변환 완료: 총 {len(result)}행")
                     st.dataframe(result.head(50))
+
                     buffer = io.BytesIO()
                     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
                         out_df = result[template_columns + [c for c in result.columns if c not in template_columns]]
