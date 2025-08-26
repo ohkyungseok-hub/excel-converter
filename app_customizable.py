@@ -257,7 +257,7 @@ if run_laora:
                         except KeyError:
                             st.warning(f"소스 컬럼 '{src_colname}'(매핑: {tpl_header})을(를) 찾을 수 없습니다. 해당 필드는 비워집니다.")
 
-                                       # 템플릿 숫자형 정렬(전화번호 제외)
+                    # 템플릿 숫자형 정렬(전화번호 제외)
                     for col in template_columns:
                         if col in tpl_df.columns and tpl_df[col].notna().any():
                             if pd.api.types.is_numeric_dtype(tpl_df[col]) and col != "받는분 전화번호":
