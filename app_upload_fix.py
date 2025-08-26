@@ -68,8 +68,13 @@ def ensure_mapping_initialized(template_columns, default_mapping):
 def norm_header(s: str) -> str:
     return re.sub(r"[\s\(\)\[\]{}:：/\\\-]", "", str(s).strip().lower())
 
-def download_df(df: pd.DataFrame, base_label: str, filename_stem: str, widget_key: str, sheet_name: Optional[str] = None):
-    """df를 xlsx 또는 csv로 다운로드할 수 있는 공용 버튼."""
+def download_df(df: pd.DataFrame, base_label: str, filename_stem: str, widget_key: str, sheet_name: str | None = None):
+    """df를 xlsx 또는 csv로 다운로드할 수 있는 공용 버튼.
+    - base_label: 버튼 라벨 prefix
+    - filename_stem: 파일명 앞부분(타임스탬프와 확장자 자동)
+    - widget_key: 각 섹션별 고유 키(라디오/버튼 key 충돌 방지)
+    - sheet_name: xlsx일 때만 시트명 지정 (csv에는 영향 없음)
+    """
     fmt = st.radio("다운로드 형식", ["xlsx", "csv"], horizontal=True, key=f"fmt_{widget_key}")
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     if fmt == "xlsx":
@@ -87,6 +92,7 @@ def download_df(df: pd.DataFrame, base_label: str, filename_stem: str, widget_ke
             key=f"btn_{widget_key}_xlsx",
         )
     else:
+        # 엑셀 호환 좋게 BOM 포함
         csv_bytes = df.to_csv(index=False).encode("utf-8-sig")
         st.download_button(
             label=f"{base_label} ({filename_stem}_{ts}.csv)",
@@ -95,6 +101,7 @@ def download_df(df: pd.DataFrame, base_label: str, filename_stem: str, widget_ke
             mime="text/csv",
             key=f"btn_{widget_key}_csv",
         )
+
 
 # -------------------- Defaults --------------------
 DEFAULT_TEMPLATE_COLUMNS = [
