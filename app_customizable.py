@@ -7,6 +7,7 @@ import re
 import json
 import zipfile
 from datetime import datetime
+from typing import Optional, List
 import pandas as pd
 import streamlit as st
 
@@ -265,18 +266,19 @@ if run_laora:
                     st.success(f"라오라 변환 완료: 총 {len(result)}행")
                     st.dataframe(result.head(50))
 
-                   buffer = io.BytesIO()
-with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
-    out_df = result[template_columns + [c for c in result.columns if c not in template_columns]]
-    out_df.to_excel(writer, index=False)
+                    buffer = io.BytesIO()
+                    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+                        out_df = result[template_columns + [c for c in result.columns if c not in template_columns]]
+                        out_df.to_excel(writer, index=False)
 
-ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-st.download_button(
-    label=f"라오라 변환 결과 다운로드 (라오 3pl발주용_{ts}.xlsx)",
-    data=buffer.getvalue(),
-    file_name=f"라오 3pl발주용_{ts}.xlsx",
-    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-)
+                    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    st.download_button(
+                        label=f"라오라 변환 결과 다운로드 (라오 3pl발주용_{ts}.xlsx)",
+                        data=buffer.getvalue(),
+                        file_name=f"라오 3pl발주용_{ts}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    )
+
 st.markdown("---")
 
 # ======================================================================
@@ -349,20 +351,19 @@ if run_coupang:
 
                 st.success(f"쿠팡 변환 완료: 총 {len(result_cp)}행")
                 st.dataframe(result_cp.head(50))
-                
-                
+
                 buffer_cp = io.BytesIO()
                 with pd.ExcelWriter(buffer_cp, engine="openpyxl") as writer:
                     out_df_cp = result_cp[template_columns + [c for c in result_cp.columns if c not in template_columns]]
                     out_df_cp.to_excel(writer, index=False)
 
-                ts = datetime.now().strftime("%Y%m%d_%H%M%S")    
+                ts = datetime.now().strftime("%Y%m%d_%H%M%S")
                 st.download_button(
-                    label="쿠팡 변환 결과 다운로드 (쿠팡 3pl발주용_{ts}.xlsx)",
+                    label=f"쿠팡 변환 결과 다운로드 (쿠팡 3pl발주용_{ts}.xlsx)",
                     data=buffer_cp.getvalue(),
-                    file_name="쿠팡 3pl발주용_{ts}.xlsx",
+                    file_name=f"쿠팡 3pl발주용_{ts}.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-)
+                )
 
 st.markdown("---")
 
@@ -464,7 +465,7 @@ if run_ss_fixed:
                     data=buffer_ss.getvalue(),
                     file_name=f"스마트스토어 3pl발주용_{ts}.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-)
+                )
 
 st.markdown("---")
 
@@ -558,7 +559,7 @@ if run_ttarimall:
                 with pd.ExcelWriter(buffer_tm, engine="openpyxl") as writer:
                     out_df_tm = result_tm[template_columns + [c for c in result_tm.columns if c not in template_columns]]
                     out_df_tm.to_excel(writer, index=False)
-                   
+
                 ts = datetime.now().strftime("%Y%m%d_%H%M%S")
                 st.download_button(
                     label=f"떠리몰 변환 결과 다운로드 (떠리몰 3pl발주용_{ts}.xlsx)",
@@ -698,8 +699,7 @@ def convert_ttarimall(df_tm: pd.DataFrame) -> pd.DataFrame:
     col_addr  = resolve(TTARIMALL_FIXED_LETTER_MAPPING["받는분 주소"])
     col_phone = resolve(TTARIMALL_FIXED_LETTER_MAPPING["받는분 전화번호"])
     col_v     = resolve(TTARIMALL_FIXED_LETTER_MAPPING["상품명"])
-    # S는 고정
-    col_s     = resolve("S")
+    col_s     = resolve("S")  # S 고정
     col_qty   = resolve(TTARIMALL_FIXED_LETTER_MAPPING["수량"])
     col_memo  = resolve(TTARIMALL_FIXED_LETTER_MAPPING["메모"])
 
@@ -791,10 +791,7 @@ st.caption("라오라 / 쿠팡 / 스마트스토어(키워드) / 떠리몰(S&V) 
 # 6) 송장등록: 송장파일(.xls/.xlsx) → 라오/스마트스토어/쿠팡 분류 & 생성
 # ======================================================================
 
-import re
-from typing import Optional, List
-
-# 안전 로더(.xls 지원) — 이미 있다면 중복 정의하지 마세요.
+# 안전 로더(.xls 지원)
 def _read_excel_any(file, header=0, dtype=str, keep_default_na=False) -> pd.DataFrame:
     name = (getattr(file, "name", "") or "").lower()
 
@@ -856,7 +853,6 @@ def _read_excel_any(file, header=0, dtype=str, keep_default_na=False) -> pd.Data
 def _digits_only(x: str) -> str:
     return re.sub(r"\D+", "", str(x or ""))
 
-
 st.markdown("## 🚚 송장등록")
 
 with st.expander("동작 요약", expanded=False):
@@ -874,7 +870,7 @@ with st.expander("동작 요약", expanded=False):
         """
     )
 
-# 라오 고정 컬럼 및 업로드 UI
+# 라오 고정 컬럼
 LAO_FIXED_TEMPLATE_COLUMNS = ["주문번호", "택배사코드", "송장번호"]
 
 st.subheader("1) 파일 업로드")
@@ -1034,7 +1030,6 @@ def make_cp_filled_df_by_letters(df_invoice: Optional[pd.DataFrame],
 
     return out
 
-
 if run_invoice:
     # NameError 방지용 초기화
     df_invoice = None
@@ -1115,10 +1110,9 @@ if run_invoice:
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 )
 
-                # 스마트스토어 송장 완성.xlsx — 시트명: 배송처리
+                # 스마트스토어 송장 완성.xlsx — 시트명: 배송처리, 택배사=롯데택배(디폴트)
                 if ss_out_df is not None and not ss_out_df.empty:
                     ss_out_export = ss_out_df.copy()
-                    # (안전) 택배사 기본값 다시 보장
                     if "택배사" not in ss_out_export.columns:
                         ss_out_export["택배사"] = "롯데택배"
                     else:
