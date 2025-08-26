@@ -1109,3 +1109,92 @@ if run_invoice:
 
             except Exception as e:
                 st.exception(RuntimeError(f"송장등록 처리 중 오류: {e}"))
+if run_invoice:
+    df_invoice = None
+    df_ss_orders = None
+    df_cp_orders = None
+    df_tm_orders = None   # ← 추가
+
+    # ... (기존 송장파일/스마트스토어/쿠팡 읽기 그대로)
+
+    if tm_order_file:
+        try:
+            df_tm_orders = read_first_sheet_source_as_text(tm_order_file)
+        except Exception as e:
+            st.warning(f"떠리몰 주문 파일을 읽는 중 오류: {e}")
+            df_tm_orders = None
+
+    if df_invoice is None:
+        st.error("송장파일을 읽지 못했습니다. 파일 형식 및 내용(주문번호/송장번호 컬럼)을 확인해 주세요.")
+    else:
+        try:
+            order_track_map = build_order_tracking_map(df_invoice)
+            lao_map, ss_map = classify_orders(order_track_map)
+
+            lao_out_df = make_lao_invoice_df_fixed(lao_map)
+            ss_out_df  = make_ss_filled_df(ss_map, df_ss_orders)
+            cp_out_df  = make_cp_filled_df_by_letters(df_invoice, df_cp_orders)
+
+            # 떠리몰: 송장파일 전체 매핑(order_track_map)을 그대로 사용
+            tm_out_df = make_tm_filled_df(df_tm_orders, order_track_map)  # ← 추가
+
+            # 쿠팡 업데이트 건수 계산(기존 로직 유지)
+            cp_update_cnt = 0
+            if df_cp_orders is not None and not df_cp_orders.empty:
+                try:
+                    inv_map_tmp = build_inv_map_from_P(df_invoice)
+                    cp_cols_tmp = list(df_cp_orders.columns)
+                    cp_order_col_tmp = cp_cols_tmp[excel_col_to_index("C")]
+                    mapped_tmp = df_cp_orders[cp_order_col_tmp].astype(str).map(_digits_only).map(inv_map_tmp)
+                    cp_update_cnt = int((mapped_tmp.notna() & mapped_tmp.astype(str).str.len().gt(0)).sum())
+                except Exception:
+                    cp_update_cnt = 0
+
+            # (선택) 떠리몰 업데이트 건수도 간단히 계산
+            tm_update_cnt = 0
+            if df_tm_orders is not None and not df_tm_orders.empty and tm_out_df is not None and not tm_out_df.empty:
+                try:
+                    # 기존값과 달라진(혹은 새로 채워진) 셀 수 추정
+                    # 우선 쓰인 송장 컬럼명을 다시 추정
+                    tm_track_col = next((c for c in TRACKING_KEYS if c in tm_out_df.columns), "송장번호")
+                    before = df_tm_orders.get(tm_track_col, pd.Series([""]*len(df_tm_orders))).astype(str).fillna("")
+                    after  = tm_out_df.get(tm_track_col, pd.Series([""]*len(tm_out_df))).astype(str).fillna("")
+                    tm_update_cnt = int((before != after).sum())
+                except Exception:
+                    tm_update_cnt = 0
+
+            st.success(
+                f"분류/매칭 완료: 라오 {len(lao_map)}건 / 스마트스토어 {len(ss_map)}건 / "
+                f"쿠팡 업데이트 예정 {cp_update_cnt}건 / 떠리몰 갱신 {tm_update_cnt}건"
+            )
+
+            with st.expander("라오 송장 미리보기", expanded=True):
+                st.dataframe(lao_out_df.head(50))
+            with st.expander("스마트스토어 송장 미리보기 (시트명: 배송처리)", expanded=False):
+                st.dataframe(ss_out_df.head(50))
+            with st.expander("쿠팡 송장 미리보기", expanded=False):
+                st.dataframe(cp_out_df.head(50))
+            with st.expander("떠리몰 송장 미리보기", expanded=False):       # ← 추가
+                st.dataframe(tm_out_df.head(50))
+
+            # 다운로드
+            download_df(lao_out_df, "라오 송장 완성 다운로드", "라오 송장 완성", "lao_inv")
+            if ss_out_df is not None and not ss_out_df.empty:
+                ss_out_export = ss_out_df.copy()
+                if "택배사" not in ss_out_export.columns:
+                    ss_out_export["택배사"] = "롯데택배"
+                else:
+                    ser = ss_out_export["택배사"].astype(str)
+                    empty_mask = ser.str.lower().eq("nan") | ser.str.strip().eq("")
+                    ss_out_export.loc[empty_mask, "택배사"] = "롯데택배"
+                download_df(ss_out_export, "스마트스토어 송장 완성 다운로드", "스마트스토어 송장 완성", "ss_inv", sheet_name="배송처리")
+            if cp_out_df is not None and not cp_out_df.empty:
+                download_df(cp_out_df, "쿠팡 송장 완성 다운로드", "쿠팡 송장 완성", "cp_inv")
+            if tm_out_df is not None and not tm_out_df.empty:                # ← 추가
+                download_df(tm_out_df, "떠리몰 송장 완성 다운로드", "떠리몰 송장 완성", "tm_inv")
+
+            if (ss_out_df is None or ss_out_df.empty) and (cp_out_df is None or cp_out_df.empty) and (tm_out_df is None or tm_out_df.empty):
+                st.info("스마트스토어/쿠팡/떠리몰 대상 건이 없거나, 매칭할 주문 파일이 없어 생성 결과가 없습니다.")
+
+        except Exception as e:
+            st.exception(RuntimeError(f"송장등록 처리 중 오류: {e}"))
