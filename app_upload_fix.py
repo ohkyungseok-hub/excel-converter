@@ -68,16 +68,14 @@ def ensure_mapping_initialized(template_columns, default_mapping):
 def norm_header(s: str) -> str:
     return re.sub(r"[\s\(\)\[\]{}:：/\\\-]", "", str(s).strip().lower())
 
-def download_df(df: pd.DataFrame, base_label: str, filename_stem: str, widget_key: str, sheet_name: str | None = None):
-    """df를 xlsx 또는 csv로 다운로드할 수 있는 공용 버튼.
-    - base_label: 버튼 라벨 prefix
-    - filename_stem: 파일명 앞부분(타임스탬프와 확장자 자동)
-    - widget_key: 각 섹션별 고유 키(라디오/버튼 key 충돌 방지)
-    - sheet_name: xlsx일 때만 시트명 지정 (csv에는 영향 없음)
-    """
-    fmt = st.radio("다운로드 형식", ["xlsx", "csv"], horizontal=True, key=f"fmt_{widget_key}")
+def download_df(df: pd.DataFrame, base_label: str, filename_stem: str, widget_key: str, sheet_name: Optional[str] = None):
+    """XLSX / CSV 두 버튼을 항상 동시에 보여주는 다운로드 위젯."""
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    if fmt == "xlsx":
+
+    col1, col2 = st.columns(2)
+
+    # XLSX 버튼
+    with col1:
         buf = io.BytesIO()
         with pd.ExcelWriter(buf, engine="openpyxl") as writer:
             if sheet_name:
@@ -85,12 +83,24 @@ def download_df(df: pd.DataFrame, base_label: str, filename_stem: str, widget_ke
             else:
                 df.to_excel(writer, index=False)
         st.download_button(
-            label=f"{base_label} ({filename_stem}_{ts}.xlsx)",
+            label=f"{base_label} (XLSX)",
             data=buf.getvalue(),
             file_name=f"{filename_stem}_{ts}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             key=f"btn_{widget_key}_xlsx",
         )
+
+    # CSV 버튼 (Excel 호환을 위해 UTF-8-SIG)
+    with col2:
+        csv_bytes = df.to_csv(index=False).encode("utf-8-sig")
+        st.download_button(
+            label=f"{base_label} (CSV)",
+            data=csv_bytes,
+            file_name=f"{filename_stem}_{ts}.csv",
+            mime="text/csv",
+            key=f"btn_{widget_key}_csv",
+        )
+
     else:
         # 엑셀 호환 좋게 BOM 포함
         csv_bytes = df.to_csv(index=False).encode("utf-8-sig")
