@@ -13,9 +13,9 @@ from typing import Optional, List
 import pandas as pd
 import streamlit as st
 
-st.set_page_config(page_title="엑셀 양식 변환기 (1→2)", layout="centered")
+st.set_page_config(page_title="황지후의 발주 대작전 (1→2)", layout="centered")
 
-st.title("엑셀 양식 변환기 (1 → 2)")
+st.title("황지후의 발주 대작전 (1 → 2)")
 st.caption("라오라 / 쿠팡 / 스마트스토어(키워드) / 떠리몰(S&V 규칙) 형식을 2번 템플릿으로 변환합니다. (전화번호 0 보존)")
 
 # -------------------------- Helpers --------------------------
@@ -115,7 +115,7 @@ DEFAULT_TEMPLATE_COLUMNS = [
     "메모",
 ]
 
-# 라오라 기본 매핑 (열 문자)
+# 라오 기본 매핑 (열 문자)
 DEFAULT_MAPPING = {
     "주문번호": "A",
     "받는분 이름": "I",
