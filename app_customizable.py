@@ -8,6 +8,7 @@ import json
 import zipfile
 from datetime import datetime
 from typing import Optional, List
+
 import pandas as pd
 import streamlit as st
 
@@ -23,8 +24,9 @@ def excel_col_to_index(col_letters: str) -> int:
         raise ValueError(f"Invalid Excel column letters: {col_letters}")
     idx = 0
     for ch in col_letters:
-        idx = idx * 26 + (ord(ch) - ord('A') + 1)
+        idx = idx * 26 + (ord(ch) - ord("A") + 1)
     return idx - 1  # 0-based
+
 
 def index_to_excel_col(n: int) -> str:
     s = ""
@@ -34,12 +36,15 @@ def index_to_excel_col(n: int) -> str:
         s = chr(r + 65) + s
     return s
 
+
 def excel_letters(max_cols=104):
     return [index_to_excel_col(i) for i in range(max_cols)]
+
 
 def read_first_sheet_template(file) -> pd.DataFrame:
     """템플릿(2.xlsx)은 일반적으로 읽기"""
     return pd.read_excel(file, sheet_name=0, header=0, engine="openpyxl")
+
 
 def read_first_sheet_source_as_text(file) -> pd.DataFrame:
     """소스는 전 컬럼을 문자열로 읽어 전화번호 앞 0 보존"""
@@ -52,6 +57,7 @@ def read_first_sheet_source_as_text(file) -> pd.DataFrame:
         keep_default_na=False,  # 빈값을 NaN 대신 빈 문자열로 유지
     )
 
+
 def ensure_mapping_initialized(template_columns, default_mapping):
     m = st.session_state.get("mapping")
     if not isinstance(m, dict):
@@ -63,8 +69,10 @@ def ensure_mapping_initialized(template_columns, default_mapping):
     st.session_state["mapping"] = synced
     return st.session_state["mapping"]
 
+
 def norm_header(s: str) -> str:
     return re.sub(r"[\s\(\)\[\]{}:：/\\\-]", "", str(s).strip().lower())
+
 
 # -------------------- Defaults --------------------
 DEFAULT_TEMPLATE_COLUMNS = [
@@ -255,7 +263,9 @@ if run_laora:
                             else:
                                 result[tpl_header] = df_src[src_colname]
                         except KeyError:
-                            st.warning(f"소스 컬럼 '{src_colname}'(매핑: {tpl_header})을(를) 찾을 수 없습니다. 해당 필드는 비워집니다.")
+                            st.warning(
+                                f"소스 컬럼 '{src_colname}'(매핑: {tpl_header})을(를) 찾을 수 없습니다. 해당 필드는 비워집니다."
+                            )
 
                     # 템플릿 숫자형 정렬(전화번호 제외)
                     for col in template_columns:
@@ -266,6 +276,7 @@ if run_laora:
                     st.success(f"라오라 변환 완료: 총 {len(result)}행")
                     st.dataframe(result.head(50))
 
+                    # ----- 파일 저장 & 다운로드 버튼 -----
                     buffer = io.BytesIO()
                     with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
                         out_df = result[template_columns + [c for c in result.columns if c not in template_columns]]
@@ -341,7 +352,9 @@ if run_coupang:
                         else:
                             result_cp[tpl_header] = df_src_cp[src_colname]
                     except KeyError:
-                        st.warning(f"[쿠팡] 소스 컬럼 '{src_colname}'(매핑: {tpl_header})을(를) 찾을 수 없습니다. 해당 필드는 비워집니다.")
+                        st.warning(
+                            f"[쿠팡] 소스 컬럼 '{src_colname}'(매핑: {tpl_header})을(를) 찾을 수 없습니다. 해당 필드는 비워집니다."
+                        )
 
                 # 템플릿 숫자형 정렬(전화번호 제외)
                 for col in template_columns:
@@ -419,30 +432,30 @@ if run_ss_fixed:
 
             try:
                 col_order = find_col(SS_NAME_MAP["주문번호"], df_ss)
-                col_name  = find_col(SS_NAME_MAP["받는분 이름"], df_ss)
-                col_addr  = find_col(SS_NAME_MAP["받는분 주소"], df_ss)
+                col_name = find_col(SS_NAME_MAP["받는분 이름"], df_ss)
+                col_addr = find_col(SS_NAME_MAP["받는분 주소"], df_ss)
                 col_phone = find_col(SS_NAME_MAP["받는분 전화번호"], df_ss)
                 col_prod_l = find_col(SS_NAME_MAP["상품명_left"], df_ss)
                 col_prod_r = find_col(SS_NAME_MAP["상품명_right"], df_ss)
-                col_qty   = find_col(SS_NAME_MAP["수량"], df_ss)
-                col_memo  = find_col(SS_NAME_MAP["메모"], df_ss)
+                col_qty = find_col(SS_NAME_MAP["수량"], df_ss)
+                col_memo = find_col(SS_NAME_MAP["메모"], df_ss)
             except Exception as e:
                 st.exception(RuntimeError(f"스마트스토어 키워드 매핑 해석 중 오류: {e}"))
             else:
                 result_ss = pd.DataFrame(index=range(len(df_ss)), columns=template_columns)
 
-                result_ss["주문번호"]   = df_ss[col_order]
+                result_ss["주문번호"] = df_ss[col_order]
                 result_ss["받는분 이름"] = df_ss[col_name]
                 result_ss["받는분 주소"] = df_ss[col_addr]
 
                 series_phone = df_ss[col_phone].astype(str)
                 result_ss["받는분 전화번호"] = series_phone.where(series_phone.str.lower() != "nan", "")
 
-                left_raw  = df_ss[col_prod_l].astype(str)
+                left_raw = df_ss[col_prod_l].astype(str)
                 right_raw = df_ss[col_prod_r].astype(str)
-                left  = left_raw.where(left_raw.str.lower()  != "nan", "")
+                left = left_raw.where(left_raw.str.lower() != "nan", "")
                 right = right_raw.where(right_raw.str.lower() != "nan", "")
-                result_ss["상품명"] = (left.fillna("") + right.fillna(""))
+                result_ss["상품명"] = left.fillna("") + right.fillna("")
 
                 result_ss["수량"] = pd.to_numeric(df_ss[col_qty], errors="coerce")
                 result_ss["메모"] = df_ss[col_memo]
@@ -518,13 +531,13 @@ if run_ttarimall:
 
             try:
                 col_order = resolve(TTARIMALL_FIXED_LETTER_MAPPING["주문번호"])
-                col_name  = resolve(TTARIMALL_FIXED_LETTER_MAPPING["받는분 이름"])
-                col_addr  = resolve(TTARIMALL_FIXED_LETTER_MAPPING["받는분 주소"])
+                col_name = resolve(TTARIMALL_FIXED_LETTER_MAPPING["받는분 이름"])
+                col_addr = resolve(TTARIMALL_FIXED_LETTER_MAPPING["받는분 주소"])
                 col_phone = resolve(TTARIMALL_FIXED_LETTER_MAPPING["받는분 전화번호"])
-                col_prod_v  = resolve(TTARIMALL_FIXED_LETTER_MAPPING["상품명"])  # V
-                col_prod_s  = resolve("S")  # S 열도 함께 사용
-                col_qty   = resolve(TTARIMALL_FIXED_LETTER_MAPPING["수량"])
-                col_memo  = resolve(TTARIMALL_FIXED_LETTER_MAPPING["메모"])
+                col_prod_v = resolve(TTARIMALL_FIXED_LETTER_MAPPING["상품명"])  # V
+                col_prod_s = resolve("S")  # S 열도 함께 사용
+                col_qty = resolve(TTARIMALL_FIXED_LETTER_MAPPING["수량"])
+                col_memo = resolve(TTARIMALL_FIXED_LETTER_MAPPING["메모"])
             except Exception as e:
                 st.exception(RuntimeError(f"떠리몰 고정 매핑 인덱스 계산 중 오류: {e}"))
             else:
@@ -539,7 +552,7 @@ if run_ttarimall:
                 v_series_raw = df_tm[col_prod_v].astype(str)
                 s_series = s_series_raw.where(s_series_raw.str.lower() != "nan", "")
                 v_series = v_series_raw.where(v_series_raw.str.lower() != "nan", "")
-                same_mask = (s_series == v_series)
+                same_mask = s_series == v_series
                 prod_series = v_series.copy()
                 prod_series.loc[~same_mask] = s_series[~same_mask] + v_series[~same_mask]
                 result_tm["상품명"] = prod_series
@@ -585,17 +598,14 @@ def detect_platform_by_headers(df: pd.DataFrame) -> str:
         keys_norm = [norm_header(k) for k in keys]
         return any(k in headers for k in keys_norm)
 
-    # 떠리몰 신호
     if has_any(["수령자명", "수령자연락처", "옵션명:옵션값"]):
         return "TTARIMALL"
-    # 스마트스토어 신호
     if has_any(["수취인명", "수취인연락처1", "통합배송지"]):
         return "SMARTSTORE"
-    # 쿠팡 신호
     if has_any(["최초등록상품명"]) or (has_any(["구매수"]) and has_any(["옵션명"])) or has_any(["배송메시지"]):
         return "COUPANG"
-    # 그 외 → 라오라로 가정
     return "LAORA"
+
 
 def convert_laora(df_src: pd.DataFrame) -> pd.DataFrame:
     mapping = st.session_state.get("mapping", {})
@@ -624,6 +634,7 @@ def convert_laora(df_src: pd.DataFrame) -> pd.DataFrame:
             result[tpl_header] = df_src[src_colname]
     return result
 
+
 def convert_coupang(df_src: pd.DataFrame) -> pd.DataFrame:
     result = pd.DataFrame(index=range(len(df_src)), columns=template_columns)
     src_cols_by_index = list(df_src.columns)
@@ -646,6 +657,7 @@ def convert_coupang(df_src: pd.DataFrame) -> pd.DataFrame:
             result[tpl_header] = df_src[src_colname]
     return result
 
+
 def find_col(preferred_names, df):
     norm_cols = {norm_header(c): c for c in df.columns}
     cand_norm = [norm_header(x) for x in preferred_names]
@@ -658,18 +670,19 @@ def find_col(preferred_names, df):
             return sorted(hits, key=len)[0]
     raise KeyError(f"해당 키워드에 맞는 컬럼을 찾을 수 없습니다: {preferred_names}")
 
+
 def convert_smartstore_keywords(df_ss: pd.DataFrame) -> pd.DataFrame:
     col_order = find_col(SS_NAME_MAP["주문번호"], df_ss)
-    col_name  = find_col(SS_NAME_MAP["받는분 이름"], df_ss)
-    col_addr  = find_col(SS_NAME_MAP["받는분 주소"], df_ss)
+    col_name = find_col(SS_NAME_MAP["받는분 이름"], df_ss)
+    col_addr = find_col(SS_NAME_MAP["받는분 주소"], df_ss)
     col_phone = find_col(SS_NAME_MAP["받는분 전화번호"], df_ss)
     col_prod_l = find_col(SS_NAME_MAP["상품명_left"], df_ss)
     col_prod_r = find_col(SS_NAME_MAP["상품명_right"], df_ss)
-    col_qty   = find_col(SS_NAME_MAP["수량"], df_ss)
-    col_memo  = find_col(SS_NAME_MAP["메모"], df_ss)
+    col_qty = find_col(SS_NAME_MAP["수량"], df_ss)
+    col_memo = find_col(SS_NAME_MAP["메모"], df_ss)
 
     result = pd.DataFrame(index=range(len(df_ss)), columns=template_columns)
-    result["주문번호"]   = df_ss[col_order]
+    result["주문번호"] = df_ss[col_order]
     result["받는분 이름"] = df_ss[col_name]
     result["받는분 주소"] = df_ss[col_addr]
     phone = df_ss[col_phone].astype(str)
@@ -683,8 +696,10 @@ def convert_smartstore_keywords(df_ss: pd.DataFrame) -> pd.DataFrame:
     result["메모"] = df_ss[col_memo]
     return result
 
+
 def convert_ttarimall(df_tm: pd.DataFrame) -> pd.DataFrame:
     src_cols_by_index = list(df_tm.columns)
+
     def resolve(letter: str) -> str:
         idx = excel_col_to_index(letter)
         if idx >= len(src_cols_by_index):
@@ -695,13 +710,13 @@ def convert_ttarimall(df_tm: pd.DataFrame) -> pd.DataFrame:
         return src_cols_by_index[idx]
 
     col_order = resolve(TTARIMALL_FIXED_LETTER_MAPPING["주문번호"])
-    col_name  = resolve(TTARIMALL_FIXED_LETTER_MAPPING["받는분 이름"])
-    col_addr  = resolve(TTARIMALL_FIXED_LETTER_MAPPING["받는분 주소"])
+    col_name = resolve(TTARIMALL_FIXED_LETTER_MAPPING["받는분 이름"])
+    col_addr = resolve(TTARIMALL_FIXED_LETTER_MAPPING["받는분 주소"])
     col_phone = resolve(TTARIMALL_FIXED_LETTER_MAPPING["받는분 전화번호"])
-    col_v     = resolve(TTARIMALL_FIXED_LETTER_MAPPING["상품명"])
-    col_s     = resolve("S")  # S 고정
-    col_qty   = resolve(TTARIMALL_FIXED_LETTER_MAPPING["수량"])
-    col_memo  = resolve(TTARIMALL_FIXED_LETTER_MAPPING["메모"])
+    col_v = resolve(TTARIMALL_FIXED_LETTER_MAPPING["상품명"])
+    col_s = resolve("S")
+    col_qty = resolve(TTARIMALL_FIXED_LETTER_MAPPING["수량"])
+    col_memo = resolve(TTARIMALL_FIXED_LETTER_MAPPING["메모"])
 
     result = pd.DataFrame(index=range(len(df_tm)), columns=template_columns)
     result["주문번호"] = df_tm[col_order]
@@ -714,7 +729,7 @@ def convert_ttarimall(df_tm: pd.DataFrame) -> pd.DataFrame:
     v_raw = df_tm[col_v].astype(str)
     s = s_raw.where(s_raw.str.lower() != "nan", "")
     v = v_raw.where(v_raw.str.lower() != "nan", "")
-    same = (s == v)
+    same = s == v
     prod = v.copy()
     prod.loc[~same] = s[~same] + v[~same]
     result["상품명"] = prod
@@ -723,12 +738,14 @@ def convert_ttarimall(df_tm: pd.DataFrame) -> pd.DataFrame:
     result["메모"] = df_tm[col_memo]
     return result
 
+
 def post_numeric_alignment(result_df: pd.DataFrame):
     # 템플릿 숫자형 정렬(전화번호 제외)
     for col in template_columns:
         if col in result_df.columns and col in tpl_df.columns and tpl_df[col].notna().any():
             if pd.api.types.is_numeric_dtype(tpl_df[col]) and col != "받는분 전화번호":
                 result_df[col] = pd.to_numeric(result_df[col], errors="coerce")
+
 
 if run_batch:
     if not batch_files:
@@ -815,8 +832,7 @@ def _read_excel_any(file, header=0, dtype=str, keep_default_na=False) -> pd.Data
     def _read_with(engine: Optional[str]):
         bio = io.BytesIO(data) if data is not None else file
         return pd.read_excel(
-            bio, sheet_name=0, header=header, dtype=dtype,
-            keep_default_na=keep_default_na, engine=engine,
+            bio, sheet_name=0, header=header, dtype=dtype, keep_default_na=keep_default_na, engine=engine
         )
 
     try:
@@ -841,17 +857,18 @@ def _read_excel_any(file, header=0, dtype=str, keep_default_na=False) -> pd.Data
                         return _read_with("xlrd")
                     except Exception as e:
                         raise RuntimeError(
-                            "엑셀 파일을 읽을 수 없습니다. (.xlsx는 openpyxl, .xls는 xlrd 필요)\n"
-                            f"원본 오류: {e}"
+                            "엑셀 파일을 읽을 수 없습니다. (.xlsx는 openpyxl, .xls는 xlrd 필요)\n" f"원본 오류: {e}"
                         )
     except RuntimeError:
         raise
     except Exception as e:
         raise RuntimeError(f"엑셀 파일을 읽는 중 알 수 없는 오류: {e}")
 
+
 # 숫자만 남기는 헬퍼 (쿠팡 매칭용)
 def _digits_only(x: str) -> str:
     return re.sub(r"\D+", "", str(x or ""))
+
 
 st.markdown("## 🚚 송장등록")
 
@@ -881,11 +898,12 @@ cp_order_file = st.file_uploader("쿠팡 주문 파일 업로드 (선택)", type
 run_invoice = st.button("송장등록 실행")
 
 # 헤더 후보
-ORDER_KEYS_INVOICE   = ["주문번호", "주문ID", "주문코드", "주문번호1"]
-TRACKING_KEYS        = ["송장번호", "운송장번호", "운송장", "등기번호", "운송장 번호", "송장번호1"]
+ORDER_KEYS_INVOICE = ["주문번호", "주문ID", "주문코드", "주문번호1"]
+TRACKING_KEYS = ["송장번호", "운송장번호", "운송장", "등기번호", "운송장 번호", "송장번호1"]
 
-SS_ORDER_KEYS        = ["주문번호"]
+SS_ORDER_KEYS = ["주문번호"]
 SS_TRACKING_COL_NAME = "송장번호"
+
 
 def build_order_tracking_map(df_invoice: pd.DataFrame):
     """송장파일에서 (주문번호 → 송장번호) 매핑 생성 (헤더명 기반)"""
@@ -900,6 +918,7 @@ def build_order_tracking_map(df_invoice: pd.DataFrame):
         if o and t:
             mapping[str(o)] = str(t)
     return mapping
+
 
 def classify_orders(mapping: dict):
     """
@@ -917,6 +936,7 @@ def classify_orders(mapping: dict):
             ss[s] = t
     return lao, ss
 
+
 def make_lao_invoice_df_fixed(lao_map: dict) -> pd.DataFrame:
     """라오 송장: 고정 컬럼으로 DF 생성 (택배사코드=08, 컬럼 순서 고정)"""
     if not lao_map:
@@ -929,6 +949,7 @@ def make_lao_invoice_df_fixed(lao_map: dict) -> pd.DataFrame:
     )
     return out
 
+
 def _pick_existing_col(df: pd.DataFrame, candidates: List[str], default_name: str) -> str:
     """후보 중 존재하는 컬럼명을 우선 사용, 없으면 default_name 생성"""
     norm_cols = {norm_header(c): c for c in df.columns}
@@ -939,6 +960,7 @@ def _pick_existing_col(df: pd.DataFrame, candidates: List[str], default_name: st
     if default_name not in df.columns:
         df[default_name] = ""
     return default_name
+
 
 def make_ss_filled_df(ss_map: dict, ss_df: Optional[pd.DataFrame]) -> pd.DataFrame:
     """스마트스토어 주문 파일에 송장번호를 매칭해 추가/갱신 (파일 없으면 2열 매핑만)"""
@@ -969,6 +991,7 @@ def make_ss_filled_df(ss_map: dict, ss_df: Optional[pd.DataFrame]) -> pd.DataFra
 
     return out
 
+
 # --- (쿠팡) 송장파일 P열 기반 매핑 생성: 키는 숫자만 ---
 def build_inv_map_from_P(df_invoice: pd.DataFrame) -> dict:
     """
@@ -991,8 +1014,8 @@ def build_inv_map_from_P(df_invoice: pd.DataFrame) -> dict:
             inv_map[key] = str(t)  # 중복 키는 마지막 값 우선
     return inv_map
 
-def make_cp_filled_df_by_letters(df_invoice: Optional[pd.DataFrame],
-                                 cp_df: Optional[pd.DataFrame]) -> pd.DataFrame:
+
+def make_cp_filled_df_by_letters(df_invoice: Optional[pd.DataFrame], cp_df: Optional[pd.DataFrame]) -> pd.DataFrame:
     """
     쿠팡 송장등록:
       - 매칭 키: (숫자만 남긴) 송장파일의 **P열 주문번호** ↔ (숫자만 남긴) 쿠팡주문파일의 **C열 주문번호**
@@ -1010,7 +1033,7 @@ def make_cp_filled_df_by_letters(df_invoice: Optional[pd.DataFrame],
     try:
         cp_order_col = cp_cols[excel_col_to_index("C")]  # 매칭 키
     except Exception:
-        raise RuntimeError("쿠팡 주문 파일에 C열(주문번호)이 없습니다. 쿠팡 주문파일 양식을 확인해 주세요.")
+         raise RuntimeError("쿠팡 주문 파일에 C열(주문번호)이 없습니다. 쿠팡 주문파일 양식을 확인해 주세요.")
     try:
         cp_track_col = cp_cols[excel_col_to_index("E")]  # 쓰기 대상
     except Exception:
