@@ -69,13 +69,26 @@ def norm_header(s: str) -> str:
     return re.sub(r"[\s\(\)\[\]{}:：/\\\-]", "", str(s).strip().lower())
 
 def download_df(df: pd.DataFrame, base_label: str, filename_stem: str, widget_key: str, sheet_name: Optional[str] = None):
-    """XLSX / CSV 두 버튼을 항상 동시에 보여주는 다운로드 위젯."""
+    """CSV 버튼을 먼저, 그 다음에 XLSX 버튼을 보여주는 다운로드 위젯."""
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
 
-    col1, col2 = st.columns(2)
+    # CSV가 첫 번째 컬럼(좁은 화면에선 위)으로 오도록 순서 배치
+    col_csv, col_xlsx = st.columns(2)
+
+    # CSV 버튼 (Excel 호환을 위해 UTF-8-SIG)
+    with col_csv:
+        csv_bytes = df.to_csv(index=False).encode("utf-8-sig")
+        st.download_button(
+            label=f"{base_label} (CSV)",
+            data=csv_bytes,
+            file_name=f"{filename_stem}_{ts}.csv",
+            mime="text/csv",
+            key=f"btn_{widget_key}_csv",
+            help="빠르고 가벼운 CSV 형식으로 저장합니다.",
+        )
 
     # XLSX 버튼
-    with col1:
+    with col_xlsx:
         buf = io.BytesIO()
         with pd.ExcelWriter(buf, engine="openpyxl") as writer:
             if sheet_name:
@@ -88,18 +101,9 @@ def download_df(df: pd.DataFrame, base_label: str, filename_stem: str, widget_ke
             file_name=f"{filename_stem}_{ts}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             key=f"btn_{widget_key}_xlsx",
+            help="서식 유지가 필요한 경우 XLSX로 저장하세요.",
         )
 
-    # CSV 버튼 (Excel 호환을 위해 UTF-8-SIG)
-    with col2:
-        csv_bytes = df.to_csv(index=False).encode("utf-8-sig")
-        st.download_button(
-            label=f"{base_label} (CSV)",
-            data=csv_bytes,
-            file_name=f"{filename_stem}_{ts}.csv",
-            mime="text/csv",
-            key=f"btn_{widget_key}_csv",
-        )
 
     else:
         # 엑셀 호환 좋게 BOM 포함
