@@ -68,6 +68,17 @@ def ensure_mapping_initialized(template_columns, default_mapping):
 def norm_header(s: str) -> str:
     return re.sub(r"[\s\(\)\[\]{}:：/\\\-]", "", str(s).strip().lower())
 
+# ★ 추가: CSV에서 Excel이 숫자로 오인하지 않도록 텍스트 보호
+def _guard_excel_text(s: str) -> str:
+    """
+    Excel이 CSV를 열 때 숫자로 오인하지 않도록 '="값"' 형태로 감싸기.
+    이미 ="..." 형태면 중복 적용하지 않음.
+    """
+    s = "" if s is None else str(s)
+    if s == "" or s.startswith('="'):
+        return s
+    return f'="{s}"'
+
 def download_df(df: pd.DataFrame, base_label: str, filename_stem: str, widget_key: str, sheet_name: Optional[str] = None):
     """CSV 버튼을 먼저, 그 다음에 XLSX 버튼을 보여주는 다운로드 위젯."""
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -77,7 +88,13 @@ def download_df(df: pd.DataFrame, base_label: str, filename_stem: str, widget_ke
 
     # CSV 버튼 (Excel 호환을 위해 UTF-8-SIG)
     with col_csv:
-        csv_bytes = df.to_csv(index=False).encode("utf-8-sig")
+        # ★ 추가: 전화번호/연락처/휴대폰 컬럼을 ="값" 형태로 보호
+        df_safe = df.copy()
+        phone_like_cols = [c for c in df_safe.columns if re.search(r"(전화번호|연락처|휴대폰)", str(c))]
+        for c in phone_like_cols:
+            df_safe[c] = df_safe[c].astype(str).map(_guard_excel_text)
+
+        csv_bytes = df_safe.to_csv(index=False).encode("utf-8-sig")
         st.download_button(
             label=f"{base_label} (CSV)",
             data=csv_bytes,
