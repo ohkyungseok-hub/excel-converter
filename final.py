@@ -79,29 +79,52 @@ def _guard_excel_text(s: str) -> str:
         return s
     return f'="{s}"'
 
+# -------------------- CSV 출력 설정(구분자/인코딩) --------------------
+CSV_SEPARATORS = {
+    "쉼표(,)": ",",
+    "세미콜론(;)": ";",
+    "탭(\\t)": "\t",
+    "파이프(|)": "|",
+}
+CSV_ENCODINGS = {
+    "UTF-8-SIG (권장)": "utf-8-sig",
+    "UTF-8 (BOM 없음)": "utf-8",
+    "CP949 (윈도우)": "cp949",
+    "EUC-KR": "euc-kr",
+}
+
+def _get_csv_prefs():
+    sep = st.session_state.get("csv_sep", ",")
+    enc = st.session_state.get("csv_encoding", "utf-8-sig")
+    label_sep = st.session_state.get("csv_sep_label", "쉼표(,)")
+    label_enc = st.session_state.get("csv_enc_label", "UTF-8-SIG (권장)")
+    return sep, enc, label_sep, label_enc
+
 def download_df(df: pd.DataFrame, base_label: str, filename_stem: str, widget_key: str, sheet_name: Optional[str] = None):
     """CSV 버튼을 먼저, 그 다음에 XLSX 버튼을 보여주는 다운로드 위젯."""
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-
-    # CSV가 첫 번째 컬럼(좁은 화면에선 위)으로 오도록 순서 배치
     col_csv, col_xlsx = st.columns(2)
 
-    # CSV 버튼 (Excel 호환을 위해 UTF-8-SIG)
+    # 현재 CSV 설정 불러오기
+    csv_sep, csv_enc, label_sep, label_enc = _get_csv_prefs()
+
+    # CSV 버튼 (Excel 호환을 위해 기본 UTF-8-SIG + 쉼표)
     with col_csv:
-        # ★ 전화번호/연락처/휴대폰 컬럼을 ="값" 형태로 보호
+        # 전화번호 계열 컬럼 보호: ="값"
         df_safe = df.copy()
         phone_like_cols = [c for c in df_safe.columns if re.search(r"(전화번호|연락처|휴대폰)", str(c))]
         for c in phone_like_cols:
             df_safe[c] = df_safe[c].astype(str).map(_guard_excel_text)
 
-        csv_bytes = df_safe.to_csv(index=False).encode("utf-8-sig")
+        csv_str = df_safe.to_csv(index=False, sep=csv_sep, lineterminator="\n")
+        csv_bytes = csv_str.encode(csv_enc, errors="replace")
         st.download_button(
-            label=f"{base_label} (CSV)",
+            label=f"{base_label} (CSV · {label_sep} · {label_enc})",
             data=csv_bytes,
             file_name=f"{filename_stem}_{ts}.csv",
             mime="text/csv",
             key=f"btn_{widget_key}_csv",
-            help="빠르고 가벼운 CSV 형식으로 저장합니다.",
+            help="선택한 구분자/인코딩으로 CSV 저장합니다.",
         )
 
     # XLSX 버튼
@@ -193,6 +216,16 @@ st.sidebar.divider()
 st.sidebar.subheader("라오라 매핑 저장/불러오기")
 mapping_upload = st.sidebar.file_uploader("매핑 JSON 불러오기 (라오라)", type=["json"], key="mapping_json")
 prepare_download = st.sidebar.button("현재 라오라 매핑 JSON 다운로드 준비")
+
+# ★ CSV 출력 설정
+st.sidebar.divider()
+st.sidebar.header("CSV 출력 설정")
+sep_label = st.sidebar.selectbox("구분자", list(CSV_SEPARATORS.keys()), index=0, help="엑셀에서 쉼표로 인식하게 하려면 '쉼표(,)'를 선택하세요.")
+enc_label = st.sidebar.selectbox("인코딩", list(CSV_ENCODINGS.keys()), index=0, help="엑셀 호환에는 보통 'UTF-8-SIG (권장)'을 사용합니다.")
+st.session_state["csv_sep_label"] = sep_label
+st.session_state["csv_enc_label"] = enc_label
+st.session_state["csv_sep"] = CSV_SEPARATORS[sep_label]
+st.session_state["csv_encoding"] = CSV_ENCODINGS[enc_label]
 
 # -------------------------- 템플릿 설정 (공용) --------------------------
 st.subheader("템플릿 설정 (2.xlsx)")
@@ -519,7 +552,7 @@ with st.expander("떠리몰(키워드) → 템플릿 매핑 보기", expanded=Fa
 st.subheader("떠리몰 소스 파일 업로드 (키워드 매핑)")
 src_file_ttarimall = st.file_uploader("떠리몰 형식의 파일 업로드 (예: 떠리몰.xlsx)", type=["xlsx"], key="src_ttarimall")
 
-# 공용 find_col (스마트스토어 섹션에서 정의한 것을 재사용)
+# 공용 find_col
 def find_col(preferred_names, df):
     norm_cols = {norm_header(c): c for c in df.columns}
     cand_norm = [norm_header(x) for x in preferred_names]
@@ -611,7 +644,7 @@ def detect_platform_by_headers(df: pd.DataFrame) -> str:
         keys_norm = [norm_header(k) for k in keys]
         return any(k in headers for k in keys_norm)
 
-    # 떠리몰 감지 키워드 (유지/확장 가능)
+    # 떠리몰 감지 키워드
     if has_any(["수령자명", "수령자연락처", "옵션명:옵션값"]):
         return "TTARIMALL"
     if has_any(["수취인명", "수취인연락처1", "통합배송지"]):
@@ -695,7 +728,6 @@ def convert_smartstore_keywords(df_ss: pd.DataFrame) -> pd.DataFrame:
     return result
 
 def convert_ttarimall_keywords_for_batch(df_tm: pd.DataFrame) -> pd.DataFrame:
-    # 배치용: 위의 convert_ttarimall_keywords와 동일 동작
     return convert_ttarimall_keywords(df_tm)
 
 def post_numeric_alignment(result_df: pd.DataFrame):
@@ -1016,7 +1048,7 @@ def make_tm_filled_df(tm_df: Optional[pd.DataFrame], inv_map: dict) -> pd.DataFr
     # 1) 주문번호 컬럼 찾기
     tm_order_col = find_col(TM_ORDER_KEYS, tm_df)
 
-    # 2) 송장번호(기입) 컬럼 결정: TRACKING_KEYS 중 첫 번째로 존재하는 컬럼, 없으면 '송장번호' 새로 생성
+    # 2) 송장번호(기입) 컬럼 결정
     tracking_col_candidates = [c for c in TRACKING_KEYS if c in list(tm_df.columns)]
     if tracking_col_candidates:
         tm_tracking_col = tracking_col_candidates[0]
@@ -1079,10 +1111,10 @@ if run_invoice:
                 order_track_map = build_order_tracking_map(df_invoice)
                 lao_map, ss_map = classify_orders(order_track_map)
 
-                lao_out_df = make_lao_invoice_df_fixed(lao_map)                 # 라오: 택배사코드=08
-                ss_out_df = make_ss_filled_df(ss_map, df_ss_orders)             # 스마트스토어: 시트명 '배송처리'로 저장
-                cp_out_df = make_cp_filled_df_by_letters(df_invoice, df_cp_orders)  # 쿠팡: P↔C 숫자 비교, E열 채움
-                tm_out_df = make_tm_filled_df(df_tm_orders, order_track_map)    # 떠리몰: 주문번호 매칭 후 송장번호 기입
+                lao_out_df = make_lao_invoice_df_fixed(lao_map)
+                ss_out_df = make_ss_filled_df(ss_map, df_ss_orders)
+                cp_out_df = make_cp_filled_df_by_letters(df_invoice, df_cp_orders)
+                tm_out_df = make_tm_filled_df(df_tm_orders, order_track_map)
 
                 cp_update_cnt = 0
                 if df_cp_orders is not None and not df_cp_orders.empty:
