@@ -16,7 +16,7 @@ import streamlit as st
 st.set_page_config(page_title="황지후의 발주 대작전 (1→2)", layout="centered")
 
 st.title("황지후의 발주 대작전 (1 → 2)")
-st.caption("라오라 / 쿠팡 / 스마트스토어(키워드) / 떠리몰(S&V 규칙) 형식을 2번 템플릿으로 변환합니다. (전화번호 0 보존)")
+st.caption("라오라 / 쿠팡 / 스마트스토어(키워드) / 떠리몰(키워드 S&V 규칙) 형식을 2번 템플릿으로 변환합니다. (전화번호 0 보존)")
 
 # -------------------------- Helpers --------------------------
 def excel_col_to_index(col_letters: str) -> int:
@@ -68,7 +68,7 @@ def ensure_mapping_initialized(template_columns, default_mapping):
 def norm_header(s: str) -> str:
     return re.sub(r"[\s\(\)\[\]{}:：/\\\-]", "", str(s).strip().lower())
 
-# ★ 추가: CSV에서 Excel이 숫자로 오인하지 않도록 텍스트 보호
+# ★ CSV에서 Excel이 숫자로 오인하지 않도록 텍스트 보호
 def _guard_excel_text(s: str) -> str:
     """
     Excel이 CSV를 열 때 숫자로 오인하지 않도록 '="값"' 형태로 감싸기.
@@ -88,7 +88,7 @@ def download_df(df: pd.DataFrame, base_label: str, filename_stem: str, widget_ke
 
     # CSV 버튼 (Excel 호환을 위해 UTF-8-SIG)
     with col_csv:
-        # ★ 추가: 전화번호/연락처/휴대폰 컬럼을 ="값" 형태로 보호
+        # ★ 전화번호/연락처/휴대폰 컬럼을 ="값" 형태로 보호
         df_safe = df.copy()
         phone_like_cols = [c for c in df_safe.columns if re.search(r"(전화번호|연락처|휴대폰)", str(c))]
         for c in phone_like_cols:
@@ -166,15 +166,16 @@ SS_NAME_MAP = {
     "메모": ["배송메세지", "배송메시지", "배송요청사항"],
 }
 
-# 떠리몰 고정 매핑 (열 문자) + 상품명 S&V 규칙
-TTARIMALL_FIXED_LETTER_MAPPING = {
-    "주문번호": "H",
-    "받는분 이름": "AB",
-    "받는분 주소": "AE",
-    "받는분 전화번호": "AC",
-    "상품명": "V",  # 비교는 S와 수행
-    "수량": "Y",
-    "메모": "AA",
+# ★ 떠리몰 키워드 매핑용 후보 (S & V 규칙)
+TTARIMALL_NAME_MAP = {
+    "주문번호": ["주문번호", "주문ID", "주문코드", "주문번호1"],
+    "받는분 이름": ["수령자명", "받는분", "수취인명", "수령자"],
+    "받는분 주소": ["주소", "수령자주소", "배송지주소", "통합배송지"],
+    "받는분 전화번호": ["수령자연락처", "연락처", "휴대폰", "전화번호", "연락처1"],
+    "상품명_S": ["상품명(S)", "상품명_S", "상품명S", "판매상품명", "상품명"],
+    "상품명_V": ["옵션명:옵션값", "옵션", "옵션명", "옵션정보", "옵션내용", "옵션값", "상품옵션"],
+    "수량": ["수량", "구매수", "주문수량"],
+    "메모": ["배송메시지", "배송메세지", "배송요청사항", "메모"],
 }
 
 # -------------------------- Sidebar --------------------------
@@ -496,28 +497,75 @@ if run_ss_fixed:
 st.markdown("---")
 
 # ======================================================================
-# 4) 떠리몰 파일 변환 (고정 매핑: 열 문자)
+# 4) 떠리몰 파일 변환 (키워드 매핑: S&V 규칙)
 # ======================================================================
-st.markdown("## 떠리몰 파일 변환 (고정 매핑: 열 문자)")
+st.markdown("## 떠리몰 파일 변환 (키워드 매핑)")
 
-with st.expander("떠리몰(고정) → 템플릿 매핑 보기", expanded=False):
+with st.expander("떠리몰(키워드) → 템플릿 매핑 보기", expanded=False):
     st.markdown(
         """
-        **떠리몰 소스열 → 템플릿 컬럼**  
-        - `H` → **주문번호**  
-        - `AB` → **받는분 이름** (수령자명)  
-        - `AE` → **받는분 주소** (주소)  
-        - `AC` → **받는분 전화번호** (수령자연락처)  
-        - `S & V` → **상품명** (S와 V가 같으면 V만, 다르면 S&V로 연결)  
-        - `Y` → **수량**  
-        - `AA` → **메모** (배송메시지)
+        **떠리몰 컬럼명(헤더) → 템플릿 컬럼**  
+        - `주문번호/주문ID/...` → **주문번호**  
+        - `수령자명/받는분/...` → **받는분 이름**  
+        - `주소/배송지주소/...` → **받는분 주소**  
+        - `수령자연락처/연락처/휴대폰/...` → **받는분 전화번호**  
+        - `상품명(S)` & `옵션명:옵션값`(또는 옵션 관련 컬럼) → **상품명**  
+          (S와 V가 같으면 V만, 다르면 S+V 그대로 연결)  
+        - `수량/구매수/...` → **수량**  
+        - `배송메시지/메모/...` → **메모**
         """
     )
 
-st.subheader("떠리몰 소스 파일 업로드 (고정 매핑)")
+st.subheader("떠리몰 소스 파일 업로드 (키워드 매핑)")
 src_file_ttarimall = st.file_uploader("떠리몰 형식의 파일 업로드 (예: 떠리몰.xlsx)", type=["xlsx"], key="src_ttarimall")
 
-run_ttarimall = st.button("떠리몰 변환 실행 (고정 매핑)")
+# 공용 find_col (스마트스토어 섹션에서 정의한 것을 재사용)
+def find_col(preferred_names, df):
+    norm_cols = {norm_header(c): c for c in df.columns}
+    cand_norm = [norm_header(x) for x in preferred_names]
+    for n in cand_norm:
+        if n in norm_cols:
+            return norm_cols[n]
+    for want in cand_norm:
+        hits = [orig for k, orig in norm_cols.items() if want in k]
+        if hits:
+            return sorted(hits, key=len)[0]
+    raise KeyError(f"해당 키워드에 맞는 컬럼을 찾을 수 없습니다: {preferred_names}")
+
+def convert_ttarimall_keywords(df_tm: pd.DataFrame) -> pd.DataFrame:
+    col_order = find_col(TTARIMALL_NAME_MAP["주문번호"], df_tm)
+    col_name  = find_col(TTARIMALL_NAME_MAP["받는분 이름"], df_tm)
+    col_addr  = find_col(TTARIMALL_NAME_MAP["받는분 주소"], df_tm)
+    col_phone = find_col(TTARIMALL_NAME_MAP["받는분 전화번호"], df_tm)
+    col_s     = find_col(TTARIMALL_NAME_MAP["상품명_S"], df_tm)
+    col_v     = find_col(TTARIMALL_NAME_MAP["상품명_V"], df_tm)
+    col_qty   = find_col(TTARIMALL_NAME_MAP["수량"], df_tm)
+    col_memo  = find_col(TTARIMALL_NAME_MAP["메모"], df_tm)
+
+    result_tm = pd.DataFrame(index=range(len(df_tm)), columns=template_columns)
+
+    result_tm["주문번호"] = df_tm[col_order]
+    result_tm["받는분 이름"] = df_tm[col_name]
+    result_tm["받는분 주소"] = df_tm[col_addr]
+
+    series_phone = df_tm[col_phone].astype(str)
+    result_tm["받는분 전화번호"] = series_phone.where(series_phone.str.lower() != "nan", "")
+
+    s_series_raw = df_tm[col_s].astype(str)
+    v_series_raw = df_tm[col_v].astype(str)
+    s_series = s_series_raw.where(s_series_raw.str.lower() != "nan", "")
+    v_series = v_series_raw.where(v_series_raw.str.lower() != "nan", "")
+    same_mask = (s_series == v_series)
+    prod_series = v_series.copy()
+    prod_series.loc[~same_mask] = s_series[~same_mask] + v_series[~same_mask]
+    result_tm["상품명"] = prod_series
+
+    result_tm["수량"] = pd.to_numeric(df_tm[col_qty], errors="coerce")
+    result_tm["메모"] = df_tm[col_memo]
+
+    return result_tm
+
+run_ttarimall = st.button("떠리몰 변환 실행 (키워드 매핑)")
 if run_ttarimall:
     if not src_file_ttarimall:
         st.error("떠리몰 소스 파일을 업로드해 주세요.")
@@ -529,60 +577,22 @@ if run_ttarimall:
         except Exception as e:
             st.exception(RuntimeError(f"떠리몰 소스 파일을 읽는 중 오류: {e}"))
         else:
-            result_tm = pd.DataFrame(index=range(len(df_tm)), columns=template_columns)
-
-            src_cols_by_index_tm = list(df_tm.columns)
-
-            def resolve(letter: str) -> str:
-                idx = excel_col_to_index(letter)
-                if idx >= len(src_cols_by_index_tm):
-                    raise IndexError(
-                        f"떠리몰 소스에 {letter} 열(0-based index {idx})이 없습니다. "
-                        f"소스 컬럼 수: {len(src_cols_by_index_tm)}"
-                    )
-                return src_cols_by_index_tm[idx]
-
             try:
-                col_order = resolve(TTARIMALL_FIXED_LETTER_MAPPING["주문번호"])
-                col_name = resolve(TTARIMALL_FIXED_LETTER_MAPPING["받는분 이름"])
-                col_addr = resolve(TTARIMALL_FIXED_LETTER_MAPPING["받는분 주소"])
-                col_phone = resolve(TTARIMALL_FIXED_LETTER_MAPPING["받는분 전화번호"])
-                col_prod_v = resolve(TTARIMALL_FIXED_LETTER_MAPPING["상품명"])  # V
-                col_prod_s = resolve("S")  # S 열도 함께 사용
-                col_qty = resolve(TTARIMALL_FIXED_LETTER_MAPPING["수량"])
-                col_memo = resolve(TTARIMALL_FIXED_LETTER_MAPPING["메모"])
-            except Exception as e:
-                st.exception(RuntimeError(f"떠리몰 고정 매핑 인덱스 계산 중 오류: {e}"))
-            else:
-                result_tm["주문번호"] = df_tm[col_order]
-                result_tm["받는분 이름"] = df_tm[col_name]
-                result_tm["받는분 주소"] = df_tm[col_addr]
-                series_phone = df_tm[col_phone].astype(str)
-                result_tm["받는분 전화번호"] = series_phone.where(series_phone.str.lower() != "nan", "")
+                result_tm = convert_ttarimall_keywords(df_tm)
 
-                # 상품명: S와 V가 같으면 V, 다르면 S&V
-                s_series_raw = df_tm[col_prod_s].astype(str)
-                v_series_raw = df_tm[col_prod_v].astype(str)
-                s_series = s_series_raw.where(s_series_raw.str.lower() != "nan", "")
-                v_series = v_series_raw.where(v_series_raw.str.lower() != "nan", "")
-                same_mask = (s_series == v_series)
-                prod_series = v_series.copy()
-                prod_series.loc[~same_mask] = s_series[~same_mask] + v_series[~same_mask]
-                result_tm["상품명"] = prod_series
-
-                result_tm["수량"] = pd.to_numeric(df_tm[col_qty], errors="coerce")
-                result_tm["메모"] = df_tm[col_memo]
-
+                # 템플릿 숫자형 정렬(전화번호 제외)
                 for col in template_columns:
                     if col in tpl_df.columns and tpl_df[col].notna().any():
                         if pd.api.types.is_numeric_dtype(tpl_df[col]) and col != "받는분 전화번호":
                             result_tm[col] = pd.to_numeric(result_tm[col], errors="coerce")
 
-                st.success(f"떠리몰(고정) 변환 완료: 총 {len(result_tm)}행")
+                st.success(f"떠리몰(키워드) 변환 완료: 총 {len(result_tm)}행")
                 st.dataframe(result_tm.head(50))
 
                 out_df_tm = result_tm[template_columns + [c for c in result_tm.columns if c not in template_columns]]
                 download_df(out_df_tm, "떠리몰 변환 결과 다운로드", "떠리몰 3pl발주용", "ttarimall_conv")
+            except Exception as e:
+                st.exception(RuntimeError(f"떠리몰 키워드 매핑 해석 중 오류: {e}"))
 
 st.markdown("---")
 
@@ -601,6 +611,7 @@ def detect_platform_by_headers(df: pd.DataFrame) -> str:
         keys_norm = [norm_header(k) for k in keys]
         return any(k in headers for k in keys_norm)
 
+    # 떠리몰 감지 키워드 (유지/확장 가능)
     if has_any(["수령자명", "수령자연락처", "옵션명:옵션값"]):
         return "TTARIMALL"
     if has_any(["수취인명", "수취인연락처1", "통합배송지"]):
@@ -616,7 +627,7 @@ def convert_laora(df_src: pd.DataFrame) -> pd.DataFrame:
     result = pd.DataFrame(index=range(len(df_src)), columns=template_columns)
     src_cols_by_index = list(df_src.columns)
     resolved_map = {}
-    for tpl_header, xl_letters in mapping.items():
+    for tpl_header, xl_letters in st.session_state["mapping"].items():
         if not xl_letters:
             continue
         idx = excel_col_to_index(xl_letters)
@@ -658,18 +669,6 @@ def convert_coupang(df_src: pd.DataFrame) -> pd.DataFrame:
             result[tpl_header] = df_src[src_colname]
     return result
 
-def find_col(preferred_names, df):
-    norm_cols = {norm_header(c): c for c in df.columns}
-    cand_norm = [norm_header(x) for x in preferred_names]
-    for n in cand_norm:
-        if n in norm_cols:
-            return norm_cols[n]
-    for want in cand_norm:
-        hits = [orig for k, orig in norm_cols.items() if want in k]
-        if hits:
-            return sorted(hits, key=len)[0]
-    raise KeyError(f"해당 키워드에 맞는 컬럼을 찾을 수 없습니다: {preferred_names}")
-
 def convert_smartstore_keywords(df_ss: pd.DataFrame) -> pd.DataFrame:
     col_order = find_col(SS_NAME_MAP["주문번호"], df_ss)
     col_name = find_col(SS_NAME_MAP["받는분 이름"], df_ss)
@@ -695,46 +694,9 @@ def convert_smartstore_keywords(df_ss: pd.DataFrame) -> pd.DataFrame:
     result["메모"] = df_ss[col_memo]
     return result
 
-def convert_ttarimall(df_tm: pd.DataFrame) -> pd.DataFrame:
-    src_cols_by_index = list(df_tm.columns)
-
-    def resolve(letter: str) -> str:
-        idx = excel_col_to_index(letter)
-        if idx >= len(src_cols_by_index):
-            raise IndexError(
-                f"떠리몰 소스에 {letter} 열(0-based index {idx})이 없습니다. "
-                f"소스 컬럼 수: {len(src_cols_by_index)}"
-            )
-        return src_cols_by_index[idx]
-
-    col_order = resolve(TTARIMALL_FIXED_LETTER_MAPPING["주문번호"])
-    col_name = resolve(TTARIMALL_FIXED_LETTER_MAPPING["받는분 이름"])
-    col_addr = resolve(TTARIMALL_FIXED_LETTER_MAPPING["받는분 주소"])
-    col_phone = resolve(TTARIMALL_FIXED_LETTER_MAPPING["받는분 전화번호"])
-    col_v = resolve(TTARIMALL_FIXED_LETTER_MAPPING["상품명"])
-    col_s = resolve("S")
-    col_qty = resolve(TTARIMALL_FIXED_LETTER_MAPPING["수량"])
-    col_memo = resolve(TTARIMALL_FIXED_LETTER_MAPPING["메모"])
-
-    result = pd.DataFrame(index=range(len(df_tm)), columns=template_columns)
-    result["주문번호"] = df_tm[col_order]
-    result["받는분 이름"] = df_tm[col_name]
-    result["받는분 주소"] = df_tm[col_addr]
-    phone = df_tm[col_phone].astype(str)
-    result["받는분 전화번호"] = phone.where(phone.str.lower() != "nan", "")
-
-    s_raw = df_tm[col_s].astype(str)
-    v_raw = df_tm[col_v].astype(str)
-    s = s_raw.where(s_raw.str.lower() != "nan", "")
-    v = v_raw.where(v_raw.str.lower() != "nan", "")
-    same = (s == v)
-    prod = v.copy()
-    prod.loc[~same] = s[~same] + v[~same]
-    result["상품명"] = prod
-
-    result["수량"] = pd.to_numeric(df_tm[col_qty], errors="coerce")
-    result["메모"] = df_tm[col_memo]
-    return result
+def convert_ttarimall_keywords_for_batch(df_tm: pd.DataFrame) -> pd.DataFrame:
+    # 배치용: 위의 convert_ttarimall_keywords와 동일 동작
+    return convert_ttarimall_keywords(df_tm)
 
 def post_numeric_alignment(result_df: pd.DataFrame):
     # 템플릿 숫자형 정렬(전화번호 제외)
@@ -763,7 +725,7 @@ if run_batch:
                 platform = detect_platform_by_headers(df)
                 try:
                     if platform == "TTARIMALL":
-                        out_df = convert_ttarimall(df)
+                        out_df = convert_ttarimall_keywords_for_batch(df)
                     elif platform == "SMARTSTORE":
                         out_df = convert_smartstore_keywords(df)
                     elif platform == "COUPANG":
@@ -796,7 +758,7 @@ if run_batch:
             mime="application/zip",
         )
 
-st.caption("라오라 / 쿠팡 / 스마트스토어(키워드) / 떠리몰(S&V) 외 양식도 추가 가능합니다. 규칙만 알려주시면 바로 넣어드릴게요.")
+st.caption("라오라 / 쿠팡 / 스마트스토어(키워드) / 떠리몰(키워드 S&V) 외 양식도 추가 가능합니다. 규칙만 알려주시면 바로 넣어드릴게요.")
 
 # ======================================================================
 # 6) 송장등록: 송장파일(.xls/.xlsx) → 라오/스마트스토어/쿠팡/떠리몰 분류 & 생성
@@ -884,7 +846,7 @@ with st.expander("동작 요약", expanded=False):
           (결과 **시트명: 배송처리**, `택배사` 기본값=**롯데택배**, 파일명에 타임스탬프)
         - **쿠팡 출력**: **송장파일의 P열(주문번호)** ↔ **쿠팡주문파일의 C열(주문번호)** 를  
           **숫자만 비교**하여 일치 시 **쿠팡주문파일 E열(운송장 번호)** 에 **송장파일의 송장번호** 입력
-        - **떠리몰 출력(신규)**: 떠리몰 주문파일의 **주문번호 컬럼**을 찾아 **송장번호**를 자동 기입  
+        - **떠리몰 출력(키워드)**: 떠리몰 주문파일의 **주문번호 컬럼**을 찾아 **송장번호**를 자동 기입  
           (TRACKING_KEYS 중 존재하는 컬럼에 쓰고, 없으면 `송장번호`를 새로 생성)
         """
     )
@@ -896,7 +858,7 @@ st.subheader("1) 파일 업로드")
 invoice_file = st.file_uploader("송장번호 포함 파일 업로드 (예: 송장파일.xls)", type=["xls", "xlsx"], key="inv_file")
 ss_order_file = st.file_uploader("스마트스토어 주문 파일 업로드 (선택)", type=["xlsx"], key="inv_ss_orders")
 cp_order_file = st.file_uploader("쿠팡 주문 파일 업로드 (선택)", type=["xlsx"], key="inv_cp_orders")
-tm_order_file = st.file_uploader("떠리몰 주문 파일 업로드 (선택)", type=["xlsx"], key="inv_tm_orders")  # ★추가
+tm_order_file = st.file_uploader("떠리몰 주문 파일 업로드 (선택)", type=["xlsx"], key="inv_tm_orders")
 
 run_invoice = st.button("송장등록 실행")
 
@@ -908,7 +870,7 @@ SS_ORDER_KEYS = ["주문번호"]
 SS_TRACKING_COL_NAME = "송장번호"
 
 # 떠리몰 주문파일에서 주문번호 찾기 후보
-TM_ORDER_KEYS = ["주문번호", "주문ID", "주문코드", "주문번호1"]  # 필요시 후보 추가 가능
+TM_ORDER_KEYS = ["주문번호", "주문ID", "주문코드", "주문번호1"]
 
 def build_order_tracking_map(df_invoice: pd.DataFrame):
     """송장파일에서 (주문번호 → 송장번호) 매핑 생성 (헤더명 기반)"""
@@ -1043,10 +1005,10 @@ def make_cp_filled_df_by_letters(df_invoice: Optional[pd.DataFrame],
 
 def make_tm_filled_df(tm_df: Optional[pd.DataFrame], inv_map: dict) -> pd.DataFrame:
     """
-    떠리몰 송장등록(신규):
+    떠리몰 송장등록(키워드):
       - 매칭 키: 떠리몰 주문파일의 '주문번호' (헤더 키워드 탐색)
       - 쓰기 대상: 떠리몰 주문파일의 송장 컬럼 (TRACKING_KEYS 중 존재하는 첫 컬럼, 없으면 '송장번호' 생성)
-      - 비교 방식: 문자열 그대로 매칭 (숫자만 비교가 필요하면 _digits_only 적용으로 전환 가능)
+      - 비교 방식: 문자열 그대로 매칭
     """
     if tm_df is None or tm_df.empty:
         return pd.DataFrame()
@@ -1066,9 +1028,6 @@ def make_tm_filled_df(tm_df: Optional[pd.DataFrame], inv_map: dict) -> pd.DataFr
             out[tm_tracking_col] = ""
 
     # 3) 매핑 적용
-    #    숫자만 비교가 필요하면 아래 주석처럼 변환하여 사용:
-    # keys = out[tm_order_col].astype(str).map(_digits_only)
-    # mapped = keys.map({ _digits_only(k): v for k, v in inv_map.items() })
     keys = out[tm_order_col].astype(str)
     mapped = keys.map(inv_map)
 
@@ -1081,7 +1040,7 @@ if run_invoice:
     df_invoice = None
     df_ss_orders = None
     df_cp_orders = None
-    df_tm_orders = None   # ★추가
+    df_tm_orders = None
 
     if not invoice_file:
         st.error("송장번호가 포함된 송장파일을 업로드해 주세요. (예: 송장파일.xls)")
@@ -1123,7 +1082,7 @@ if run_invoice:
                 lao_out_df = make_lao_invoice_df_fixed(lao_map)                 # 라오: 택배사코드=08
                 ss_out_df = make_ss_filled_df(ss_map, df_ss_orders)             # 스마트스토어: 시트명 '배송처리'로 저장
                 cp_out_df = make_cp_filled_df_by_letters(df_invoice, df_cp_orders)  # 쿠팡: P↔C 숫자 비교, E열 채움
-                tm_out_df = make_tm_filled_df(df_tm_orders, order_track_map)    # ★떠리몰: 주문번호 매칭 후 송장번호 기입
+                tm_out_df = make_tm_filled_df(df_tm_orders, order_track_map)    # 떠리몰: 주문번호 매칭 후 송장번호 기입
 
                 cp_update_cnt = 0
                 if df_cp_orders is not None and not df_cp_orders.empty:
