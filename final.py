@@ -1,6 +1,6 @@
 # app_upload_fix.py
 # 실행: streamlit run app_upload_fix.py
-# 필요: pip install streamlit pandas openpyxl
+# 필요: pip install streamlit pandas openpyxl msoffcrypto-tool
 # (.xls 읽기 필요 시) pip install "xlrd==1.2.0"
 
 import io
@@ -16,7 +16,7 @@ import streamlit as st
 st.set_page_config(page_title="황지후의 발주 대작전 (1→2)", layout="centered")
 
 st.title("황지후의 발주 대작전 (1 → 2)")
-st.caption("라오라 / 쿠팡 / 스마트스토어(키워드) / 떠리몰(키워드 S&V 규칙) 형식을 2번 템플릿으로 변환합니다. (전화번호 0 보존)")
+st.caption("라오라 / 쿠팡 / 스마트스토어(키워드, 암호 1234 자동해제) / 떠리몰(키워드 S&V 규칙) 형식을 2번 템플릿으로 변환합니다. (전화번호 0 보존)")
 
 # -------------------------- Helpers --------------------------
 def excel_col_to_index(col_letters: str) -> int:
@@ -70,22 +70,13 @@ def norm_header(s: str) -> str:
 
 # ★ CSV에서 Excel이 숫자로 오인하지 않도록 텍스트 보호
 def _guard_excel_text(s: str) -> str:
-    """
-    Excel이 CSV를 열 때 숫자로 오인하지 않도록 '="값"' 형태로 감싸기.
-    이미 ="..." 형태면 중복 적용하지 않음.
-    """
     s = "" if s is None else str(s)
     if s == "" or s.startswith('="'):
         return s
     return f'="{s}"'
 
 # -------------------- CSV 출력 설정(구분자/인코딩) --------------------
-CSV_SEPARATORS = {
-    "쉼표(,)": ",",
-    "세미콜론(;)": ";",
-    "탭(\\t)": "\t",
-    "파이프(|)": "|",
-}
+CSV_SEPARATORS = {"쉼표(,)": ",", "세미콜론(;)": ";", "탭(\\t)": "\t", "파이프(|)": "|"}
 CSV_ENCODINGS = {
     "UTF-8-SIG (권장)": "utf-8-sig",
     "UTF-8 (BOM 없음)": "utf-8",
@@ -95,9 +86,9 @@ CSV_ENCODINGS = {
 
 def _get_csv_prefs():
     sep = st.session_state.get("csv_sep", ",")
-    enc = st.session_state.get("csv_encoding", "utf-8-sig")
+    enc = st.session_state.get("csv_encoding", "cp949")  # 기본 CP949
     label_sep = st.session_state.get("csv_sep_label", "쉼표(,)")
-    label_enc = st.session_state.get("csv_enc_label", "UTF-8-SIG (권장)")
+    label_enc = st.session_state.get("csv_enc_label", "CP949 (윈도우)")
     return sep, enc, label_sep, label_enc
 
 def download_df(
@@ -106,28 +97,26 @@ def download_df(
     filename_stem: str,
     widget_key: str,
     sheet_name: Optional[str] = None,
-    csv_sep_override: Optional[str] = None,      # ★ 추가
-    csv_encoding_override: Optional[str] = None, # ★ 추가
+    csv_sep_override: Optional[str] = None,
+    csv_encoding_override: Optional[str] = None,
 ):
-    """CSV 버튼을 먼저, 그 다음에 XLSX 버튼을 보여주는 다운로드 위젯."""
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     col_csv, col_xlsx = st.columns(2)
 
-    # 현재 CSV 설정 불러오기 (오버라이드 우선)
     def _labels_from_sep(sep: str) -> str:
-        return {",": "쉼표(,)", ";": "세미콜론(;)", "\t": "탭(\\t)", "|": "파이프(|)"}\
-               .get(sep, f"사용자({repr(sep)})")
+        return {",": "쉼표(,)", ";": "세미콜론(;)", "\t": "탭(\\t)", "|": "파이프(|)"}.get(sep, f"사용자({repr(sep)})")
+
     def _labels_from_enc(enc: str) -> str:
         rev = {v: k for k, v in CSV_ENCODINGS.items()}
         return rev.get(enc, enc)
 
-    default_sep, default_enc, default_sep_label, default_enc_label = _get_csv_prefs()
+    default_sep, default_enc, _, _ = _get_csv_prefs()
     csv_sep = csv_sep_override if csv_sep_override is not None else default_sep
     csv_enc = csv_encoding_override if csv_encoding_override is not None else default_enc
     label_sep = _labels_from_sep(csv_sep)
     label_enc = _labels_from_enc(csv_enc)
 
-    # CSV 버튼 (전화번호 보호: ="010...")
+    # CSV (전화번호 보호)
     with col_csv:
         df_safe = df.copy()
         phone_like_cols = [c for c in df_safe.columns if re.search(r"(전화번호|연락처|휴대폰)", str(c))]
@@ -142,10 +131,10 @@ def download_df(
             file_name=f"{filename_stem}_{ts}.csv",
             mime="text/csv",
             key=f"btn_{widget_key}_csv",
-            help="선택한(또는 강제된) 구분자/인코딩으로 CSV 저장합니다.",
+            help="선택한/강제된 구분자·인코딩으로 CSV 저장합니다.",
         )
 
-    # XLSX 버튼
+    # XLSX
     with col_xlsx:
         buf = io.BytesIO()
         with pd.ExcelWriter(buf, engine="openpyxl") as writer:
@@ -159,43 +148,16 @@ def download_df(
             file_name=f"{filename_stem}_{ts}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             key=f"btn_{widget_key}_xlsx",
-            help="서식 유지가 필요한 경우 XLSX로 저장하세요.",
+            help="서식 유지가 필요할 때 XLSX로 저장하세요.",
         )
 
 # -------------------- Defaults --------------------
-DEFAULT_TEMPLATE_COLUMNS = [
-    "주문번호",
-    "받는분 이름",
-    "받는분 주소",
-    "받는분 전화번호",
-    "상품명",
-    "수량",
-    "메모",
-]
+DEFAULT_TEMPLATE_COLUMNS = ["주문번호", "받는분 이름", "받는분 주소", "받는분 전화번호", "상품명", "수량", "메모"]
 
-# 라오 기본 매핑 (열 문자)
-DEFAULT_MAPPING = {
-    "주문번호": "A",
-    "받는분 이름": "I",
-    "받는분 주소": "L",
-    "받는분 전화번호": "J",
-    "상품명": "D",
-    "수량": "G",
-    "메모": "M",
-}
+DEFAULT_MAPPING = {"주문번호": "A", "받는분 이름": "I", "받는분 주소": "L", "받는분 전화번호": "J", "상품명": "D", "수량": "G", "메모": "M"}
 
-# 쿠팡 고정 매핑 (열 문자) — 주문번호 C
-COUPANG_MAPPING = {
-    "주문번호": "C",
-    "받는분 이름": "AA",
-    "받는분 주소": "AD",
-    "받는분 전화번호": "AB",
-    "상품명": "P",
-    "수량": "W",
-    "메모": "AE",
-}
+COUPANG_MAPPING = {"주문번호": "C", "받는분 이름": "AA", "받는분 주소": "AD", "받는분 전화번호": "AB", "상품명": "P", "수량": "W", "메모": "AE"}
 
-# 스마트스토어 키워드 매핑용 후보
 SS_NAME_MAP = {
     "주문번호": ["주문번호"],
     "받는분 이름": ["수취인명"],
@@ -207,7 +169,6 @@ SS_NAME_MAP = {
     "메모": ["배송메세지", "배송메시지", "배송요청사항"],
 }
 
-# ★ 떠리몰 키워드 매핑용 후보 (S & V 규칙)
 TTARIMALL_NAME_MAP = {
     "주문번호": ["주문번호", "주문ID", "주문코드", "주문번호1"],
     "받는분 이름": ["수령자명", "받는분", "수취인명", "수령자"],
@@ -222,24 +183,17 @@ TTARIMALL_NAME_MAP = {
 # -------------------------- Sidebar --------------------------
 st.sidebar.header("템플릿 옵션")
 use_uploaded_template = st.sidebar.checkbox("템플릿(2.xlsx) 직접 업로드", value=False)
-max_letter_cols = st.sidebar.slider(
-    "라오라용 최대 열 범위(Excel 문자)",
-    min_value=52,
-    max_value=156,
-    value=104,
-    step=26,
-    help="라오라 매핑 드롭다운의 열 문자 개수",
-)
+max_letter_cols = st.sidebar.slider("라오라용 최대 열 범위(Excel 문자)", 52, 156, 104, 26)
 st.sidebar.divider()
 st.sidebar.subheader("라오라 매핑 저장/불러오기")
 mapping_upload = st.sidebar.file_uploader("매핑 JSON 불러오기 (라오라)", type=["json"], key="mapping_json")
 prepare_download = st.sidebar.button("현재 라오라 매핑 JSON 다운로드 준비")
 
-# ★ CSV 출력 설정
+# ★ CSV 출력 설정 (기본 인코딩 CP949)
 st.sidebar.divider()
 st.sidebar.header("CSV 출력 설정")
-sep_label = st.sidebar.selectbox("구분자", list(CSV_SEPARATORS.keys()), index=0, help="엑셀에서 쉼표로 인식하게 하려면 '쉼표(,)'를 선택하세요.")
-enc_label = st.sidebar.selectbox("인코딩", list(CSV_ENCODINGS.keys()), index=0, help="엑셀 호환에는 보통 'UTF-8-SIG (권장)'을 사용합니다.")
+sep_label = st.sidebar.selectbox("구분자", list(CSV_SEPARATORS.keys()), index=0)
+enc_label = st.sidebar.selectbox("인코딩", list(CSV_ENCODINGS.keys()), index=2)  # CP949
 st.session_state["csv_sep_label"] = sep_label
 st.session_state["csv_enc_label"] = enc_label
 st.session_state["csv_sep"] = CSV_SEPARATORS[sep_label]
@@ -262,6 +216,62 @@ else:
     st.info("업로드된 템플릿이 없으므로 기본 템플릿을 사용합니다. (주문번호, 받는분 이름, 받는분 주소, 받는분 전화번호, 상품명, 수량, 메모)")
 
 template_columns = list(tpl_df.columns) if tpl_df is not None else []
+
+# ======================================================================
+# (A) 스마트스토어 전용: 비밀번호 1234 해제 + 1행 삭제 로더
+# ======================================================================
+def _get_bytes(file) -> bytes:
+    """UploadedFile 또는 파일 객체에서 원본 바이트를 얻는다."""
+    data = None
+    if hasattr(file, "getvalue"):
+        try:
+            data = file.getvalue()
+        except Exception:
+            data = None
+    if data is None:
+        try:
+            cur = file.tell() if hasattr(file, "tell") else None
+            if hasattr(file, "seek"):
+                file.seek(0)
+            data = file.read()
+            if hasattr(file, "seek") and cur is not None:
+                file.seek(cur)
+        except Exception:
+            data = None
+    if data is None:
+        raise RuntimeError("업로드 파일 바이트를 읽을 수 없습니다.")
+    return data
+
+def read_smartstore_with_password_1234(file, header=0) -> pd.DataFrame:
+    """
+    스마트스토어 .xlsx:
+      - msoffcrypto로 비밀번호 '1234' 해제 시도
+      - 실패하면 평문으로도 한번 시도
+      - 읽은 뒤 1행 삭제
+      - 전 컬럼을 문자열로 읽음(전화번호 0 보존)
+    """
+    raw = _get_bytes(file)
+    # 1) msoffcrypto 시도
+    try:
+        import msoffcrypto
+        bio = io.BytesIO(raw)
+        office = msoffcrypto.OfficeFile(bio)
+        office.load_key(password="1234")
+        out = io.BytesIO()
+        office.decrypt(out)
+        out.seek(0)
+        df = pd.read_excel(out, sheet_name=0, header=header, engine="openpyxl", dtype=str, keep_default_na=False)
+    except Exception:
+        # 2) 평문 시도
+        try:
+            df = pd.read_excel(io.BytesIO(raw), sheet_name=0, header=header, engine="openpyxl", dtype=str, keep_default_na=False)
+        except Exception as e2:
+            raise RuntimeError(f"스마트스토어 파일을 열 수 없습니다. (암호 1234 시도 및 평문 실패) 오류: {e2}")
+
+    # 1행 삭제
+    if len(df) > 0:
+        df = df.iloc[1:].reset_index(drop=True)
+    return df
 
 # ======================================================================
 # 1) 라오라 파일 변환 (열 문자 매핑)
@@ -310,12 +320,7 @@ with st.form("mapping_form_laora"):
 
 if prepare_download:
     mapping_bytes = json.dumps(current_mapping, ensure_ascii=False, indent=2).encode("utf-8")
-    st.download_button(
-        label="현재 라오라 매핑 JSON 다운로드",
-        data=mapping_bytes,
-        file_name="mapping_laora.json",
-        mime="application/json",
-    )
+    st.download_button("현재 라오라 매핑 JSON 다운로드", mapping_bytes, "mapping_laora.json", "application/json")
 
 st.subheader("라오라 소스 파일 업로드")
 src_file_laora = st.file_uploader("라오라 형식의 파일 업로드 (예: 1.xlsx)", type=["xlsx"], key="src_laora")
@@ -344,10 +349,7 @@ if run_laora:
                             continue
                         idx = excel_col_to_index(xl_letters)
                         if idx >= len(src_cols_by_index):
-                            raise IndexError(
-                                f"소스 파일에 {xl_letters} 열(0-based index {idx})이 존재하지 않습니다. "
-                                f"소스 컬럼 수: {len(src_cols_by_index)}"
-                            )
+                            raise IndexError(f"소스 파일에 {xl_letters} 열(0-based index {idx})이 존재하지 않습니다. 소스 컬럼 수: {len(src_cols_by_index)}")
                         resolved_map[tpl_header] = src_cols_by_index[idx]
                 except Exception as e:
                     st.exception(RuntimeError(f"라오라 매핑 인덱스 계산 중 오류: {e}"))
@@ -364,7 +366,6 @@ if run_laora:
                         except KeyError:
                             st.warning(f"소스 컬럼 '{src_colname}'(매핑: {tpl_header})을(를) 찾을 수 없습니다. 해당 필드는 비워집니다.")
 
-                    # 템플릿 숫자형 정렬(전화번호 제외)
                     for col in template_columns:
                         if col in tpl_df.columns and tpl_df[col].notna().any():
                             if pd.api.types.is_numeric_dtype(tpl_df[col]) and col != "받는분 전화번호":
@@ -374,7 +375,7 @@ if run_laora:
                     st.dataframe(result.head(50))
 
                     out_df = result[template_columns + [c for c in result.columns if c not in template_columns]]
-                    download_df(out_df, "라오라 변환 결과 다운로드", "라오 3pl발주용", "laora_conv")
+                    download_df(out_df, "라오라 변환 결과 다운로드", "라오 3pl발주용", "laora_conv", csv_encoding_override="cp949")
 
 st.markdown("---")
 
@@ -420,10 +421,7 @@ if run_coupang:
                 for tpl_header, xl_letters in mapping_cp.items():
                     idx = excel_col_to_index(xl_letters)
                     if idx >= len(src_cols_by_index_cp):
-                        raise IndexError(
-                            f"쿠팡 소스에 {xl_letters} 열(0-based index {idx})이 존재하지 않습니다. "
-                            f"소스 컬럼 수: {len(src_cols_by_index_cp)}"
-                        )
+                        raise IndexError(f"쿠팡 소스에 {xl_letters} 열(0-based index {idx})이 존재하지 않습니다. 소스 컬럼 수: {len(src_cols_by_index_cp)}")
                     resolved_map_cp[tpl_header] = src_cols_by_index_cp[idx]
             except Exception as e:
                 st.exception(RuntimeError(f"쿠팡 매핑 인덱스 계산 중 오류: {e}"))
@@ -440,7 +438,6 @@ if run_coupang:
                     except KeyError:
                         st.warning(f"[쿠팡] 소스 컬럼 '{src_colname}'(매핑: {tpl_header})을(를) 찾을 수 없습니다. 해당 필드는 비워집니다.")
 
-                # 템플릿 숫자형 정렬(전화번호 제외)
                 for col in template_columns:
                     if col in tpl_df.columns and tpl_df[col].notna().any():
                         if pd.api.types.is_numeric_dtype(tpl_df[col]) and col != "받는분 전화번호":
@@ -450,12 +447,12 @@ if run_coupang:
                 st.dataframe(result_cp.head(50))
 
                 out_df_cp = result_cp[template_columns + [c for c in result_cp.columns if c not in template_columns]]
-                download_df(out_df_cp, "쿠팡 변환 결과 다운로드", "쿠팡 3pl발주용", "coupang_conv")
+                download_df(out_df_cp, "쿠팡 변환 결과 다운로드", "쿠팡 3pl발주용", "coupang_conv", csv_encoding_override="cp949")
 
 st.markdown("---")
 
 # ======================================================================
-# 3) 스마트스토어 파일 변환 (키워드 매핑)
+# 3) 스마트스토어 파일 변환 (키워드 매핑, 암호 1234 자동해제 + 1행 삭제)
 # ======================================================================
 st.markdown("## 스마트스토어 파일 변환 (키워드 매핑)")
 
@@ -474,11 +471,7 @@ with st.expander("스마트스토어(키워드) → 템플릿 매핑 보기", ex
     )
 
 st.subheader("스마트스토어 소스 파일 업로드 (키워드 매핑)")
-src_file_ss_fixed = st.file_uploader(
-    "스마트스토어 형식의 파일 업로드 (예: 스마트스토어.xlsx)",
-    type=["xlsx"],
-    key="src_smartstore_fixed",
-)
+src_file_ss_fixed = st.file_uploader("스마트스토어 형식의 파일 업로드 (예: 스마트스토어.xlsx)", type=["xlsx"], key="src_smartstore_fixed")
 
 run_ss_fixed = st.button("스마트스토어 변환 실행 (키워드 매핑)")
 if run_ss_fixed:
@@ -488,7 +481,8 @@ if run_ss_fixed:
         st.error("유효한 템플릿이 필요합니다.")
     else:
         try:
-            df_ss = read_first_sheet_source_as_text(src_file_ss_fixed)
+            # ★ 암호 1234 해제 + 1행 삭제 로딩
+            df_ss = read_smartstore_with_password_1234(src_file_ss_fixed, header=0)
         except Exception as e:
             st.exception(RuntimeError(f"스마트스토어 소스 파일을 읽는 중 오류: {e}"))
         else:
@@ -543,15 +537,9 @@ if run_ss_fixed:
                 st.dataframe(result_ss.head(50))
 
                 out_df_ss = result_ss[template_columns + [c for c in result_ss.columns if c not in template_columns]]
-                download_df(
-                    out_df_ss,
-                    "스마트스토어 변환 결과 다운로드",
-                    "스마트스토어 3pl발주용",
-                    "ss_conv",
-                     sheet_name="발송처리",        # XLSX 시트명
-                     csv_sep_override=",",         # CSV 구분자 쉼표
-                     csv_encoding_override="cp949" # ★ CSV(쉼표로 분리) = CP949로 강제
-                )
+                download_df(out_df_ss, "스마트스토어 변환 결과 다운로드", "스마트스토어 3pl발주용", "ss_conv",
+                            sheet_name="발송처리", csv_sep_override=",", csv_encoding_override="cp949")
+
 st.markdown("---")
 
 # ======================================================================
@@ -577,7 +565,6 @@ with st.expander("떠리몰(키워드) → 템플릿 매핑 보기", expanded=Fa
 st.subheader("떠리몰 소스 파일 업로드 (키워드 매핑)")
 src_file_ttarimall = st.file_uploader("떠리몰 형식의 파일 업로드 (예: 떠리몰.xlsx)", type=["xlsx"], key="src_ttarimall")
 
-# 공용 find_col
 def find_col(preferred_names, df):
     norm_cols = {norm_header(c): c for c in df.columns}
     cand_norm = [norm_header(x) for x in preferred_names]
@@ -601,7 +588,6 @@ def convert_ttarimall_keywords(df_tm: pd.DataFrame) -> pd.DataFrame:
     col_memo  = find_col(TTARIMALL_NAME_MAP["메모"], df_tm)
 
     result_tm = pd.DataFrame(index=range(len(df_tm)), columns=template_columns)
-
     result_tm["주문번호"] = df_tm[col_order]
     result_tm["받는분 이름"] = df_tm[col_name]
     result_tm["받는분 주소"] = df_tm[col_addr]
@@ -620,7 +606,6 @@ def convert_ttarimall_keywords(df_tm: pd.DataFrame) -> pd.DataFrame:
 
     result_tm["수량"] = pd.to_numeric(df_tm[col_qty], errors="coerce")
     result_tm["메모"] = df_tm[col_memo]
-
     return result_tm
 
 run_ttarimall = st.button("떠리몰 변환 실행 (키워드 매핑)")
@@ -637,8 +622,6 @@ if run_ttarimall:
         else:
             try:
                 result_tm = convert_ttarimall_keywords(df_tm)
-
-                # 템플릿 숫자형 정렬(전화번호 제외)
                 for col in template_columns:
                     if col in tpl_df.columns and tpl_df[col].notna().any():
                         if pd.api.types.is_numeric_dtype(tpl_df[col]) and col != "받는분 전화번호":
@@ -648,28 +631,24 @@ if run_ttarimall:
                 st.dataframe(result_tm.head(50))
 
                 out_df_tm = result_tm[template_columns + [c for c in result_tm.columns if c not in template_columns]]
-                download_df(out_df_tm, "떠리몰 변환 결과 다운로드", "떠리몰 3pl발주용", "ttarimall_conv")
+                download_df(out_df_tm, "떠리몰 변환 결과 다운로드", "떠리몰 3pl발주용", "ttarimall_conv", csv_encoding_override="cp949")
             except Exception as e:
                 st.exception(RuntimeError(f"떠리몰 키워드 매핑 해석 중 오류: {e}"))
 
 st.markdown("---")
 
 # ======================================================================
-# 5) 배치 처리: 여러 파일 자동 분류 → 일괄 변환 → ZIP 다운로드
+# 5) 배치 처리 (그대로 유지: 스마트스토어 암호 파일은 단일 변환을 권장)
 # ======================================================================
 st.markdown("## 🗂️ 배치 처리 (여러 파일 한번에)")
-
 batch_files = st.file_uploader("여러 엑셀 파일을 한번에 업로드하세요", type=["xlsx"], accept_multiple_files=True, key="batch_files")
 run_batch = st.button("배치 변환 실행")
 
 def detect_platform_by_headers(df: pd.DataFrame) -> str:
     headers = [norm_header(c) for c in df.columns]
-
     def has_any(keys):
         keys_norm = [norm_header(k) for k in keys]
         return any(k in headers for k in keys_norm)
-
-    # 떠리몰 감지 키워드
     if has_any(["수령자명", "수령자연락처", "옵션명:옵션값"]):
         return "TTARIMALL"
     if has_any(["수취인명", "수취인연락처1", "통합배송지"]):
@@ -690,10 +669,7 @@ def convert_laora(df_src: pd.DataFrame) -> pd.DataFrame:
             continue
         idx = excel_col_to_index(xl_letters)
         if idx >= len(src_cols_by_index):
-            raise IndexError(
-                f"소스 파일에 {xl_letters} 열(0-based index {idx})이 존재하지 않습니다. "
-                f"소스 컬럼 수: {len(src_cols_by_index)}"
-            )
+            raise IndexError(f"소스 파일에 {xl_letters} 열(0-based index {idx})이 존재하지 않습니다. 소스 컬럼 수: {len(src_cols_by_index)}")
         resolved_map[tpl_header] = src_cols_by_index[idx]
     for tpl_header, src_colname in resolved_map.items():
         if tpl_header == "수량":
@@ -712,10 +688,7 @@ def convert_coupang(df_src: pd.DataFrame) -> pd.DataFrame:
     for tpl_header, xl_letters in COUPANG_MAPPING.items():
         idx = excel_col_to_index(xl_letters)
         if idx >= len(src_cols_by_index):
-            raise IndexError(
-                f"쿠팡 소스에 {xl_letters} 열(0-based index {idx})이 존재하지 않습니다. "
-                f"소스 컬럼 수: {len(src_cols_by_index)}"
-            )
+            raise IndexError(f"쿠팡 소스에 {xl_letters} 열(0-based index {idx})이 존재하지 않습니다. 소스 컬럼 수: {len(src_cols_by_index)}")
         resolved_map[tpl_header] = src_cols_by_index[idx]
     for tpl_header, src_colname in resolved_map.items():
         if tpl_header == "수량":
@@ -756,7 +729,6 @@ def convert_ttarimall_keywords_for_batch(df_tm: pd.DataFrame) -> pd.DataFrame:
     return convert_ttarimall_keywords(df_tm)
 
 def post_numeric_alignment(result_df: pd.DataFrame):
-    # 템플릿 숫자형 정렬(전화번호 제외)
     for col in template_columns:
         if col in result_df.columns and col in tpl_df.columns and tpl_df[col].notna().any():
             if pd.api.types.is_numeric_dtype(tpl_df[col]) and col != "받는분 전화번호":
@@ -774,7 +746,7 @@ if run_batch:
             for f in batch_files:
                 fname = getattr(f, "name", "uploaded.xlsx")
                 try:
-                    df = read_first_sheet_source_as_text(f)
+                    df = read_first_sheet_source_as_text(f)  # 배치에선 암호해제 미적용
                 except Exception as e:
                     logs.append(f"[FAIL] {fname}: 파일 읽기 오류 - {e}")
                     continue
@@ -787,7 +759,7 @@ if run_batch:
                         out_df = convert_smartstore_keywords(df)
                     elif platform == "COUPANG":
                         out_df = convert_coupang(df)
-                    else:  # LAORA
+                    else:
                         out_df = convert_laora(df)
                     post_numeric_alignment(out_df)
 
@@ -808,52 +780,22 @@ if run_batch:
 
         st.success("배치 변환이 완료되었습니다.")
         st.text_area("변환 로그", value="\n".join(logs), height=200)
-        st.download_button(
-            label="배치 변환 결과 ZIP 다운로드",
-            data=zip_buffer.getvalue(),
-            file_name=f"batch_converted_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip",
-            mime="application/zip",
-        )
+        st.download_button("배치 변환 결과 ZIP 다운로드", zip_buffer.getvalue(),
+                           f"batch_converted_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip", "application/zip")
 
-st.caption("라오라 / 쿠팡 / 스마트스토어(키워드) / 떠리몰(키워드 S&V) 외 양식도 추가 가능합니다. 규칙만 알려주시면 바로 넣어드릴게요.")
+st.caption("라오라 / 쿠팡 / 스마트스토어(암호 자동해제) / 떠리몰(키워드 S&V) 외 양식도 추가 가능. 규칙을 알려주시면 바로 넣어드려요.")
 
 # ======================================================================
-# 6) 송장등록: 송장파일(.xls/.xlsx) → 라오/스마트스토어/쿠팡/떠리몰 분류 & 생성
+# 6) 송장등록: 송장파일 → 라오/스마트스토어/쿠팡/떠리몰
 # ======================================================================
 
-# 안전 로더 (.xls/.xlsx)
 def _read_excel_any(file, header=0, dtype=str, keep_default_na=False) -> pd.DataFrame:
-    """
-    안전한 엑셀 로더 (.xlsx/.xls)
-      - 업로드 바이트 확보 → BytesIO 로 매 시도마다 새로 읽음
-      - .xlsx → openpyxl
-      - .xls  → xlrd (권장 버전: 1.2.0)
-    """
     name = (getattr(file, "name", "") or "").lower()
-
-    data = None
-    if hasattr(file, "getvalue"):
-        try:
-            data = file.getvalue()
-        except Exception:
-            data = None
-    if data is None:
-        try:
-            cur = file.tell() if hasattr(file, "tell") else None
-            if hasattr(file, "seek"):
-                file.seek(0)
-            data = file.read()
-            if hasattr(file, "seek") and cur is not None:
-                file.seek(cur)
-        except Exception:
-            data = None
+    data = _get_bytes(file)
 
     def _read_with(engine: Optional[str]):
-        bio = io.BytesIO(data) if data is not None else file
-        return pd.read_excel(
-            bio, sheet_name=0, header=header, dtype=dtype,
-            keep_default_na=keep_default_na, engine=engine,
-        )
+        bio = io.BytesIO(data)
+        return pd.read_excel(bio, sheet_name=0, header=header, dtype=dtype, keep_default_na=keep_default_na, engine=engine)
 
     try:
         if name.endswith(".xlsx"):
@@ -862,10 +804,7 @@ def _read_excel_any(file, header=0, dtype=str, keep_default_na=False) -> pd.Data
             try:
                 return _read_with("xlrd")
             except Exception as e:
-                raise RuntimeError(
-                    "'.xls' 파일을 읽으려면 xlrd가 필요합니다. 권장: pip install \"xlrd==1.2.0\"\n"
-                    f"원본 오류: {e}"
-                )
+                raise RuntimeError("'.xls' 파일을 읽으려면 xlrd가 필요합니다. 권장: pip install \"xlrd==1.2.0\"; 원본 오류: "+str(e))
         else:
             try:
                 return _read_with(None)
@@ -876,16 +815,12 @@ def _read_excel_any(file, header=0, dtype=str, keep_default_na=False) -> pd.Data
                     try:
                         return _read_with("xlrd")
                     except Exception as e:
-                        raise RuntimeError(
-                            "엑셀 파일을 읽을 수 없습니다. (.xlsx는 openpyxl, .xls는 xlrd 필요)\n"
-                            f"원본 오류: {e}"
-                        )
+                        raise RuntimeError("엑셀 파일을 읽을 수 없습니다. (.xlsx는 openpyxl, .xls는 xlrd 필요) 원본 오류: "+str(e))
     except RuntimeError:
         raise
     except Exception as e:
         raise RuntimeError(f"엑셀 파일을 읽는 중 알 수 없는 오류: {e}")
 
-# 숫자만 남기는 헬퍼 (쿠팡 매칭용)
 def _digits_only(x: str) -> str:
     return re.sub(r"\D+", "", str(x or ""))
 
@@ -897,46 +832,36 @@ with st.expander("동작 요약", expanded=False):
         - **분류 규칙**
           1) 주문번호에 **`LO`** 포함 → **라스트오더(라오)**
           2) (숫자 기준) **16자리** → **스마트스토어**
-        - **라오 출력**: 템플릿 업로드 없이 고정 컬럼  
-          **[`주문번호`, `택배사코드(08)`, `송장번호`]**
-        - **스마트스토어 출력**: 주문 파일과 **주문번호 매칭** → 송장번호 추가/갱신  
-          (결과 **시트명: 발송처리**, `택배사` 기본값=**롯데택배**, 파일명에 타임스탬프)
-        - **쿠팡 출력**: **송장파일의 P열(주문번호)** ↔ **쿠팡주문파일의 C열(주문번호)** 를  
-          **숫자만 비교**하여 일치 시 **쿠팡주문파일 E열(운송장 번호)** 에 **송장파일의 송장번호** 입력
-        - **떠리몰 출력(키워드)**: 떠리몰 주문파일의 **주문번호 컬럼**을 찾아 **송장번호**를 자동 기입  
-          (TRACKING_KEYS 중 존재하는 컬럼에 쓰고, 없으면 `송장번호`를 새로 생성)
+        - **라오 출력**: [`주문번호`, `택배사코드(08)`, `송장번호`]
+        - **스마트스토어 출력**: 주문 파일과 주문번호 매칭 → 송장번호 추가/갱신  
+          (결과 **시트명: 발송처리**, `택배사` 기본값=**롯데택배**)
+        - **쿠팡 출력**: 송장 P열↔쿠팡 C열(숫자만 비교) 일치 시 E열(운송장 번호)에 입력
+        - **떠리몰 출력(키워드)**: 주문번호 매칭 후 송장번호 자동 기입
         """
     )
 
-# 라오 고정 컬럼
 LAO_FIXED_TEMPLATE_COLUMNS = ["주문번호", "택배사코드", "송장번호"]
 
 st.subheader("1) 파일 업로드")
 invoice_file = st.file_uploader("송장번호 포함 파일 업로드 (예: 송장파일.xls)", type=["xls", "xlsx"], key="inv_file")
-ss_order_file = st.file_uploader("스마트스토어 주문 파일 업로드 (선택)", type=["xlsx"], key="inv_ss_orders")
+ss_order_file = st.file_uploader("스마트스토어 주문 파일 업로드 (선택, 암호 1234)", type=["xlsx"], key="inv_ss_orders")
 cp_order_file = st.file_uploader("쿠팡 주문 파일 업로드 (선택)", type=["xlsx"], key="inv_cp_orders")
 tm_order_file = st.file_uploader("떠리몰 주문 파일 업로드 (선택)", type=["xlsx"], key="inv_tm_orders")
 
 run_invoice = st.button("송장등록 실행")
 
-# 헤더 후보
 ORDER_KEYS_INVOICE = ["주문번호", "주문ID", "주문코드", "주문번호1"]
 TRACKING_KEYS = ["송장번호", "운송장번호", "운송장", "등기번호", "운송장 번호", "송장번호1"]
 
 SS_ORDER_KEYS = ["주문번호"]
 SS_TRACKING_COL_NAME = "송장번호"
-
-# 떠리몰 주문파일에서 주문번호 찾기 후보
 TM_ORDER_KEYS = ["주문번호", "주문ID", "주문코드", "주문번호1"]
 
 def build_order_tracking_map(df_invoice: pd.DataFrame):
-    """송장파일에서 (주문번호 → 송장번호) 매핑 생성 (헤더명 기반)"""
     order_col = find_col(ORDER_KEYS_INVOICE, df_invoice)
     tracking_col = find_col(TRACKING_KEYS, df_invoice)
-    orders = df_invoice[order_col].astype(str)
-    tracks = df_invoice[tracking_col].astype(str)
-    orders = orders.where(orders.str.lower() != "nan", "")
-    tracks = tracks.where(tracks.str.lower() != "nan", "")
+    orders = df_invoice[order_col].astype(str).where(lambda s: s.str.lower() != "nan", "")
+    tracks = df_invoice[tracking_col].astype(str).where(lambda s: s.str.lower() != "nan", "")
     mapping = {}
     for o, t in zip(orders, tracks):
         if o and t:
@@ -944,12 +869,6 @@ def build_order_tracking_map(df_invoice: pd.DataFrame):
     return mapping
 
 def classify_orders(mapping: dict):
-    """
-    분류:
-      - 라오: 'LO' 포함
-      - 스마트스토어: 숫자만 16자리
-      (쿠팡은 자리수 무시 숫자매칭으로 별도 처리)
-    """
     lao, ss = {}, {}
     for o, t in mapping.items():
         s = str(o).strip()
@@ -960,19 +879,13 @@ def classify_orders(mapping: dict):
     return lao, ss
 
 def make_lao_invoice_df_fixed(lao_map: dict) -> pd.DataFrame:
-    """라오 송장: 고정 컬럼으로 DF 생성 (택배사코드=08, 컬럼 순서 고정)"""
     if not lao_map:
         return pd.DataFrame(columns=LAO_FIXED_TEMPLATE_COLUMNS)
     orders = list(lao_map.keys())
     tracks = [lao_map[o] for o in orders]
-    out = pd.DataFrame(
-        {"주문번호": orders, "택배사코드": ["08"] * len(orders), "송장번호": tracks},
-        columns=LAO_FIXED_TEMPLATE_COLUMNS,
-    )
-    return out
+    return pd.DataFrame({"주문번호": orders, "택배사코드": ["08"] * len(orders), "송장번호": tracks}, columns=LAO_FIXED_TEMPLATE_COLUMNS)
 
 def make_ss_filled_df(ss_map: dict, ss_df: Optional[pd.DataFrame]) -> pd.DataFrame:
-    """스마트스토어 주문 파일에 송장번호를 매칭해 추가/갱신 (파일 없으면 2열 매핑만)"""
     if ss_df is None or ss_df.empty:
         if not ss_map:
             return pd.DataFrame()
@@ -984,27 +897,20 @@ def make_ss_filled_df(ss_map: dict, ss_df: Optional[pd.DataFrame]) -> pd.DataFra
     out = ss_df.copy()
     if SS_TRACKING_COL_NAME not in out.columns:
         out[SS_TRACKING_COL_NAME] = ""
-
     existing = out[SS_TRACKING_COL_NAME].astype(str)
     is_empty = (existing.str.lower().eq("nan")) | (existing.str.strip().eq(""))
     mapped = out[col_order].astype(str).map(ss_map).fillna("")
     out.loc[is_empty, SS_TRACKING_COL_NAME] = mapped[is_empty]
 
-    # 택배사 기본값=롯데택배
     if "택배사" not in out.columns:
         out["택배사"] = "롯데택배"
     else:
         ser = out["택배사"].astype(str)
         empty_mask = ser.str.lower().eq("nan") | ser.str.strip().eq("")
         out.loc[empty_mask, "택배사"] = "롯데택배"
-
     return out
 
-# --- (쿠팡) 송장파일 P열 기반 매핑 생성: 키는 숫자만 ---
 def build_inv_map_from_P(df_invoice: pd.DataFrame) -> dict:
-    """
-    송장파일: P열(주문번호) ↔ 송장번호(여러 헤더명 중 탐색) → {숫자키: 송장번호}
-    """
     inv_cols = list(df_invoice.columns)
     try:
         inv_order_col = inv_cols[excel_col_to_index("P")]
@@ -1019,61 +925,39 @@ def build_inv_map_from_P(df_invoice: pd.DataFrame) -> dict:
     for o, t in zip(orders, tracks):
         key = _digits_only(o)
         if key and str(t):
-            inv_map[key] = str(t)  # 중복 키는 마지막 값 우선
+            inv_map[key] = str(t)
     return inv_map
 
-def make_cp_filled_df_by_letters(df_invoice: Optional[pd.DataFrame],
-                                 cp_df: Optional[pd.DataFrame]) -> pd.DataFrame:
-    """
-    쿠팡 송장등록:
-      - 매칭 키: (숫자만 남긴) 송장파일의 P열 주문번호 ↔ (숫자만 남긴) 쿠팡주문파일의 C열 주문번호
-      - 쓰기 대상: 쿠팡주문파일의 E열(운송장 번호) ← 송장파일의 '송장번호'
-      - 자리수/포맷 무시(숫자만 비교)
-    """
+def make_cp_filled_df_by_letters(df_invoice: Optional[pd.DataFrame], cp_df: Optional[pd.DataFrame]) -> pd.DataFrame:
     if cp_df is None or cp_df.empty:
         return pd.DataFrame()
     if df_invoice is None or df_invoice.empty:
         return cp_df
 
     inv_map = build_inv_map_from_P(df_invoice)
-
     cp_cols = list(cp_df.columns)
     try:
-        cp_order_col = cp_cols[excel_col_to_index("C")]  # 매칭 키
+        cp_order_col = cp_cols[excel_col_to_index("C")]
     except Exception:
-        raise RuntimeError("쿠팡 주문 파일에 C열(주문번호)이 없습니다. 쿠팡 주문파일 양식을 확인해 주세요.")
+        raise RuntimeError("쿠팡 주문 파일에 C열(주문번호)이 없습니다.")
     try:
-        cp_track_col = cp_cols[excel_col_to_index("E")]  # 쓰기 대상
+        cp_track_col = cp_cols[excel_col_to_index("E")]
     except Exception:
         cp_track_col = "운송장 번호"
         if cp_track_col not in cp_df.columns:
             cp_df = cp_df.copy()
             cp_df[cp_track_col] = ""
-        cp_cols = list(cp_df.columns)
-
     out = cp_df.copy()
     cp_keys = out[cp_order_col].astype(str).map(_digits_only)
     mapped = cp_keys.map(inv_map)
-
     mask = mapped.notna() & mapped.astype(str).str.len().gt(0)
     out.loc[mask, cp_track_col] = mapped[mask]
-
     return out
 
 def make_tm_filled_df(tm_df: Optional[pd.DataFrame], inv_map: dict) -> pd.DataFrame:
-    """
-    떠리몰 송장등록(키워드):
-      - 매칭 키: 떠리몰 주문파일의 '주문번호' (헤더 키워드 탐색)
-      - 쓰기 대상: 떠리몰 주문파일의 송장 컬럼 (TRACKING_KEYS 중 존재하는 첫 컬럼, 없으면 '송장번호' 생성)
-      - 비교 방식: 문자열 그대로 매칭
-    """
     if tm_df is None or tm_df.empty:
         return pd.DataFrame()
-
-    # 1) 주문번호 컬럼 찾기
     tm_order_col = find_col(TM_ORDER_KEYS, tm_df)
-
-    # 2) 송장번호(기입) 컬럼 결정
     tracking_col_candidates = [c for c in TRACKING_KEYS if c in list(tm_df.columns)]
     if tracking_col_candidates:
         tm_tracking_col = tracking_col_candidates[0]
@@ -1083,14 +967,10 @@ def make_tm_filled_df(tm_df: Optional[pd.DataFrame], inv_map: dict) -> pd.DataFr
         out = tm_df.copy()
         if tm_tracking_col not in out.columns:
             out[tm_tracking_col] = ""
-
-    # 3) 매핑 적용
     keys = out[tm_order_col].astype(str)
     mapped = keys.map(inv_map)
-
     mask = mapped.notna() & mapped.astype(str).str.len().gt(0)
     out.loc[mask, tm_tracking_col] = mapped[mask]
-
     return out
 
 if run_invoice:
@@ -1110,7 +990,8 @@ if run_invoice:
 
         if ss_order_file:
             try:
-                df_ss_orders = read_first_sheet_source_as_text(ss_order_file)
+                # ★ 스마트스토어 주문 파일도 암호 1234 해제 + 1행 삭제
+                df_ss_orders = read_smartstore_with_password_1234(ss_order_file, header=0)
             except Exception as e:
                 st.warning(f"스마트스토어 주문 파일을 읽는 중 오류: {e}")
                 df_ss_orders = None
@@ -1152,7 +1033,6 @@ if run_invoice:
                     except Exception:
                         cp_update_cnt = 0
 
-                # 떠리몰 업데이트 건수 추정
                 tm_update_cnt = 0
                 if df_tm_orders is not None and not df_tm_orders.empty and tm_out_df is not None and not tm_out_df.empty:
                     try:
@@ -1163,10 +1043,7 @@ if run_invoice:
                     except Exception:
                         tm_update_cnt = 0
 
-                st.success(
-                    f"분류/매칭 완료: 라오 {len(lao_map)}건 / 스마트스토어 {len(ss_map)}건 / "
-                    f"쿠팡 업데이트 예정 {cp_update_cnt}건 / 떠리몰 갱신 {tm_update_cnt}건"
-                )
+                st.success(f"분류/매칭 완료: 라오 {len(lao_map)}건 / 스마트스토어 {len(ss_map)}건 / 쿠팡 업데이트 예정 {cp_update_cnt}건 / 떠리몰 갱신 {tm_update_cnt}건")
                 with st.expander("라오 송장 미리보기", expanded=True):
                     st.dataframe(lao_out_df.head(50))
                 with st.expander("스마트스토어 송장 미리보기 (시트명: 발송처리)", expanded=False):
@@ -1176,8 +1053,8 @@ if run_invoice:
                 with st.expander("떠리몰 송장 미리보기", expanded=False):
                     st.dataframe(tm_out_df.head(50))
 
-                # 다운로드(형식 선택)
-                download_df(lao_out_df, "라오 송장 완성 다운로드", "라오 송장 완성", "lao_inv")
+                # 다운로드 (CSV 전부 CP949)
+                download_df(lao_out_df, "라오 송장 완성 다운로드", "라오 송장 완성", "lao_inv", csv_encoding_override="cp949")
                 if ss_out_df is not None and not ss_out_df.empty:
                     ss_out_export = ss_out_df.copy()
                     if "택배사" not in ss_out_export.columns:
@@ -1186,19 +1063,12 @@ if run_invoice:
                         ser = ss_out_export["택배사"].astype(str)
                         empty_mask = ser.str.lower().eq("nan") | ser.str.strip().eq("")
                         ss_out_export.loc[empty_mask, "택배사"] = "롯데택배"
-                    download_df(
-                        ss_out_export,
-                        "스마트스토어 송장 완성 다운로드",
-                        "스마트스토어 송장 완성",
-                        "ss_inv",
-                        sheet_name="발송처리",      # ★ 시트명 고정
-                        csv_sep_override=",",       # ★ CSV 쉼표 고정
-                        csv_encoding_override="cp949",
-                    )
+                    download_df(ss_out_export, "스마트스토어 송장 완성 다운로드", "스마트스토어 송장 완성", "ss_inv",
+                                sheet_name="발송처리", csv_sep_override=",", csv_encoding_override="cp949")
                 if cp_out_df is not None and not cp_out_df.empty:
-                    download_df(cp_out_df, "쿠팡 송장 완성 다운로드", "쿠팡 송장 완성", "cp_inv")
+                    download_df(cp_out_df, "쿠팡 송장 완성 다운로드", "쿠팡 송장 완성", "cp_inv", csv_encoding_override="cp949")
                 if tm_out_df is not None and not tm_out_df.empty:
-                    download_df(tm_out_df, "떠리몰 송장 완성 다운로드", "떠리몰 송장 완성", "tm_inv")
+                    download_df(tm_out_df, "떠리몰 송장 완성 다운로드", "떠리몰 송장 완성", "tm_inv", csv_encoding_override="cp949")
 
                 if (ss_out_df is None or ss_out_df.empty) and (cp_out_df is None or cp_out_df.empty) and (tm_out_df is None or tm_out_df.empty):
                     st.info("스마트스토어/쿠팡/떠리몰 대상 건이 없거나, 매칭할 주문 파일이 없어 생성 결과가 없습니다.")
