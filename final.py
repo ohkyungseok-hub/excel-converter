@@ -548,11 +548,10 @@ if run_ss_fixed:
                     "스마트스토어 변환 결과 다운로드",
                     "스마트스토어 3pl발주용",
                     "ss_conv",
-                    sheet_name="발송처리",        # ★ 시트명 고정
-                    csv_sep_override=",",         # ★ CSV 쉼표 고정
-                    csv_encoding_override=None,   # (필요시 "utf-8-sig"로 고정 가능)
+                     sheet_name="발송처리",        # XLSX 시트명
+                     csv_sep_override=",",         # CSV 구분자 쉼표
+                     csv_encoding_override="cp949" # ★ CSV(쉼표로 분리) = CP949로 강제
                 )
-
 st.markdown("---")
 
 # ======================================================================
@@ -1194,7 +1193,7 @@ if run_invoice:
                         "ss_inv",
                         sheet_name="발송처리",      # ★ 시트명 고정
                         csv_sep_override=",",       # ★ CSV 쉼표 고정
-                        csv_encoding_override=None,
+                        csv_encoding_override="cp949",
                     )
                 if cp_out_df is not None and not cp_out_df.empty:
                     download_df(cp_out_df, "쿠팡 송장 완성 다운로드", "쿠팡 송장 완성", "cp_inv")
