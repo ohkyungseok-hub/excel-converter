@@ -1170,7 +1170,7 @@ if run_invoice:
                 )
                 with st.expander("라오 송장 미리보기", expanded=True):
                     st.dataframe(lao_out_df.head(50))
-+                with st.expander("스마트스토어 송장 미리보기 (시트명: 발송처리)", expanded=False):
+                with st.expander("스마트스토어 송장 미리보기 (시트명: 발송처리)", expanded=False):
                     st.dataframe(ss_out_df.head(50))
                 with st.expander("쿠팡 송장 미리보기", expanded=False):
                     st.dataframe(cp_out_df.head(50))
@@ -1192,7 +1192,7 @@ if run_invoice:
                         "스마트스토어 송장 완성 다운로드",
                         "스마트스토어 송장 완성",
                         "ss_inv",
-+                        sheet_name="발송처리",      # ★ 시트명 고정
+                        sheet_name="발송처리",      # ★ 시트명 고정
                         csv_sep_override=",",       # ★ CSV 쉼표 고정
                         csv_encoding_override=None,
                     )
