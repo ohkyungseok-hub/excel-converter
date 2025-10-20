@@ -1,6 +1,3 @@
-좋아요! 요청하신 **전체 수정본**입니다. 아래 코드는 스마트스토어 변환본과 스마트스토어 송장완성 CSV가 **항상 쉼표(,)** 로 저장되도록 반영되어 있습니다. (`download_df`에 오버라이드 인자를 추가하고, 해당 두 호출부에서 `csv_sep_override=","`로 강제)
-
-```python
 # app_upload_fix.py
 # 실행: streamlit run app_upload_fix.py
 # 필요: pip install streamlit pandas openpyxl
@@ -551,8 +548,9 @@ if run_ss_fixed:
                     "스마트스토어 변환 결과 다운로드",
                     "스마트스토어 3pl발주용",
                     "ss_conv",
-                    csv_sep_override=",",           # ★ 쉼표 강제
-                    csv_encoding_override=None,     # (필요시 "utf-8-sig"로 고정 가능)
+                    sheet_name="발송처리",        # ★ 시트명 고정
+                    csv_sep_override=",",         # ★ CSV 쉼표 고정
+                    csv_encoding_override=None,   # (필요시 "utf-8-sig"로 고정 가능)
                 )
 
 st.markdown("---")
@@ -903,7 +901,8 @@ with st.expander("동작 요약", expanded=False):
         - **라오 출력**: 템플릿 업로드 없이 고정 컬럼  
           **[`주문번호`, `택배사코드(08)`, `송장번호`]**
         - **스마트스토어 출력**: 주문 파일과 **주문번호 매칭** → 송장번호 추가/갱신  
-          (결과 **시트명: 배송처리**, `택배사` 기본값=**롯데택배**, 파일명에 타임스탬프)
+-         (결과 **시트명: 배송처리**, `택배사` 기본값=**롯데택배**, 파일명에 타임스탬프)
++         (결과 **시트명: 발송처리**, `택배사` 기본값=**롯데택배**, 파일명에 타임스탬프)
         - **쿠팡 출력**: **송장파일의 P열(주문번호)** ↔ **쿠팡주문파일의 C열(주문번호)** 를  
           **숫자만 비교**하여 일치 시 **쿠팡주문파일 E열(운송장 번호)** 에 **송장파일의 송장번호** 입력
         - **떠리몰 출력(키워드)**: 떠리몰 주문파일의 **주문번호 컬럼**을 찾아 **송장번호**를 자동 기입  
@@ -1172,7 +1171,8 @@ if run_invoice:
                 )
                 with st.expander("라오 송장 미리보기", expanded=True):
                     st.dataframe(lao_out_df.head(50))
-                with st.expander("스마트스토어 송장 미리보기 (시트명: 배송처리)", expanded=False):
+-                with st.expander("스마트스토어 송장 미리보기 (시트명: 배송처리)", expanded=False):
++                with st.expander("스마트스토어 송장 미리보기 (시트명: 발송처리)", expanded=False):
                     st.dataframe(ss_out_df.head(50))
                 with st.expander("쿠팡 송장 미리보기", expanded=False):
                     st.dataframe(cp_out_df.head(50))
@@ -1194,9 +1194,10 @@ if run_invoice:
                         "스마트스토어 송장 완성 다운로드",
                         "스마트스토어 송장 완성",
                         "ss_inv",
-                        sheet_name="배송처리",
-                        csv_sep_override=",",           # ★ 쉼표 강제
-                        csv_encoding_override=None,     # 필요시 "utf-8-sig"로 고정 가능
+-                        sheet_name="배송처리",
++                        sheet_name="발송처리",      # ★ 시트명 고정
+                        csv_sep_override=",",       # ★ CSV 쉼표 고정
+                        csv_encoding_override=None,
                     )
                 if cp_out_df is not None and not cp_out_df.empty:
                     download_df(cp_out_df, "쿠팡 송장 완성 다운로드", "쿠팡 송장 완성", "cp_inv")
@@ -1208,4 +1209,3 @@ if run_invoice:
 
             except Exception as e:
                 st.exception(RuntimeError(f"송장등록 처리 중 오류: {e}"))
-```
