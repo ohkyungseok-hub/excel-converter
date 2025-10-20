@@ -1,3 +1,6 @@
+좋아요! 요청하신 **전체 수정본**입니다. 아래 코드는 스마트스토어 변환본과 스마트스토어 송장완성 CSV가 **항상 쉼표(,)** 로 저장되도록 반영되어 있습니다. (`download_df`에 오버라이드 인자를 추가하고, 해당 두 호출부에서 `csv_sep_override=","`로 강제)
+
+```python
 # app_upload_fix.py
 # 실행: streamlit run app_upload_fix.py
 # 필요: pip install streamlit pandas openpyxl
@@ -100,17 +103,35 @@ def _get_csv_prefs():
     label_enc = st.session_state.get("csv_enc_label", "UTF-8-SIG (권장)")
     return sep, enc, label_sep, label_enc
 
-def download_df(df: pd.DataFrame, base_label: str, filename_stem: str, widget_key: str, sheet_name: Optional[str] = None):
+def download_df(
+    df: pd.DataFrame,
+    base_label: str,
+    filename_stem: str,
+    widget_key: str,
+    sheet_name: Optional[str] = None,
+    csv_sep_override: Optional[str] = None,      # ★ 추가
+    csv_encoding_override: Optional[str] = None, # ★ 추가
+):
     """CSV 버튼을 먼저, 그 다음에 XLSX 버튼을 보여주는 다운로드 위젯."""
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     col_csv, col_xlsx = st.columns(2)
 
-    # 현재 CSV 설정 불러오기
-    csv_sep, csv_enc, label_sep, label_enc = _get_csv_prefs()
+    # 현재 CSV 설정 불러오기 (오버라이드 우선)
+    def _labels_from_sep(sep: str) -> str:
+        return {",": "쉼표(,)", ";": "세미콜론(;)", "\t": "탭(\\t)", "|": "파이프(|)"}\
+               .get(sep, f"사용자({repr(sep)})")
+    def _labels_from_enc(enc: str) -> str:
+        rev = {v: k for k, v in CSV_ENCODINGS.items()}
+        return rev.get(enc, enc)
 
-    # CSV 버튼 (Excel 호환을 위해 기본 UTF-8-SIG + 쉼표)
+    default_sep, default_enc, default_sep_label, default_enc_label = _get_csv_prefs()
+    csv_sep = csv_sep_override if csv_sep_override is not None else default_sep
+    csv_enc = csv_encoding_override if csv_encoding_override is not None else default_enc
+    label_sep = _labels_from_sep(csv_sep)
+    label_enc = _labels_from_enc(csv_enc)
+
+    # CSV 버튼 (전화번호 보호: ="010...")
     with col_csv:
-        # 전화번호 계열 컬럼 보호: ="값"
         df_safe = df.copy()
         phone_like_cols = [c for c in df_safe.columns if re.search(r"(전화번호|연락처|휴대폰)", str(c))]
         for c in phone_like_cols:
@@ -124,7 +145,7 @@ def download_df(df: pd.DataFrame, base_label: str, filename_stem: str, widget_ke
             file_name=f"{filename_stem}_{ts}.csv",
             mime="text/csv",
             key=f"btn_{widget_key}_csv",
-            help="선택한 구분자/인코딩으로 CSV 저장합니다.",
+            help="선택한(또는 강제된) 구분자/인코딩으로 CSV 저장합니다.",
         )
 
     # XLSX 버튼
@@ -525,7 +546,14 @@ if run_ss_fixed:
                 st.dataframe(result_ss.head(50))
 
                 out_df_ss = result_ss[template_columns + [c for c in result_ss.columns if c not in template_columns]]
-                download_df(out_df_ss, "스마트스토어 변환 결과 다운로드", "스마트스토어 3pl발주용", "ss_conv")
+                download_df(
+                    out_df_ss,
+                    "스마트스토어 변환 결과 다운로드",
+                    "스마트스토어 3pl발주용",
+                    "ss_conv",
+                    csv_sep_override=",",           # ★ 쉼표 강제
+                    csv_encoding_override=None,     # (필요시 "utf-8-sig"로 고정 가능)
+                )
 
 st.markdown("---")
 
@@ -1161,7 +1189,15 @@ if run_invoice:
                         ser = ss_out_export["택배사"].astype(str)
                         empty_mask = ser.str.lower().eq("nan") | ser.str.strip().eq("")
                         ss_out_export.loc[empty_mask, "택배사"] = "롯데택배"
-                    download_df(ss_out_export, "스마트스토어 송장 완성 다운로드", "스마트스토어 송장 완성", "ss_inv", sheet_name="배송처리")
+                    download_df(
+                        ss_out_export,
+                        "스마트스토어 송장 완성 다운로드",
+                        "스마트스토어 송장 완성",
+                        "ss_inv",
+                        sheet_name="배송처리",
+                        csv_sep_override=",",           # ★ 쉼표 강제
+                        csv_encoding_override=None,     # 필요시 "utf-8-sig"로 고정 가능
+                    )
                 if cp_out_df is not None and not cp_out_df.empty:
                     download_df(cp_out_df, "쿠팡 송장 완성 다운로드", "쿠팡 송장 완성", "cp_inv")
                 if tm_out_df is not None and not tm_out_df.empty:
@@ -1172,3 +1208,4 @@ if run_invoice:
 
             except Exception as e:
                 st.exception(RuntimeError(f"송장등록 처리 중 오류: {e}"))
+```
