@@ -910,23 +910,40 @@ def make_ss_filled_df(ss_map: dict, ss_df: Optional[pd.DataFrame]) -> pd.DataFra
         out.loc[empty_mask, "택배사"] = "롯데택배"
     return out
 
+# --- (쿠팡) 송장파일에서 주문번호 매핑 생성: 기본은 P열, 없으면 헤더 키워드 ---
 def build_inv_map_from_P(df_invoice: pd.DataFrame) -> dict:
+    """
+    송장파일: (우선) P열(주문번호) 또는 (대안) 헤더 키워드(ORDER_KEYS_INVOICE)로 주문번호 열을 찾아
+    송장번호(TRACKING_KEYS)와 매핑을 만든다.
+    반환: {숫자만 남긴 주문번호: 송장번호}
+    """
     inv_cols = list(df_invoice.columns)
+
+    # 1) 송장번호(값) 컬럼 찾기
+    tracking_col = find_col(TRACKING_KEYS, df_invoice)
+
+    # 2) 주문번호(키) 컬럼: P열 우선, 없으면 헤더 키워드 탐색
     try:
         inv_order_col = inv_cols[excel_col_to_index("P")]
     except Exception:
-        raise RuntimeError("송장파일에 P열(주문번호)이 없습니다. 송장파일 양식을 확인해 주세요.")
-    tracking_col = find_col(TRACKING_KEYS, df_invoice)
+        try:
+            inv_order_col = find_col(ORDER_KEYS_INVOICE, df_invoice)
+        except Exception:
+            raise RuntimeError(
+                "송장파일에서 주문번호 열을 찾지 못했습니다. (P열 또는 헤더: 주문번호/주문ID/주문코드/주문번호1)"
+            )
 
+    # 3) 매핑 구성 (숫자만 비교용 키)
     orders = df_invoice[inv_order_col].astype(str).where(lambda s: s.str.lower() != "nan", "")
     tracks = df_invoice[tracking_col].astype(str).where(lambda s: s.str.lower() != "nan", "")
 
     inv_map = {}
     for o, t in zip(orders, tracks):
-        key = _digits_only(o)
+        key = _digits_only(o)  # 자리수/포맷 무시
         if key and str(t):
-            inv_map[key] = str(t)
+            inv_map[key] = str(t)  # 동일 키면 마지막 값 우선
     return inv_map
+
 
 def make_cp_filled_df_by_letters(df_invoice: Optional[pd.DataFrame], cp_df: Optional[pd.DataFrame]) -> pd.DataFrame:
     if cp_df is None or cp_df.empty:
