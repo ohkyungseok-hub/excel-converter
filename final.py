@@ -804,9 +804,9 @@ with st.expander("동작 요약", expanded=False):
         - **분류 규칙**
           1) 주문번호에 **`LO`** 포함 → **라스트오더(라오)**
           2) (숫자 기준) **16자리** → **스마트스토어**
-        - **라오 출력**: [`주문번호`, `택배사코드(08)`, `송장번호`]
+        - **라오 출력**: [`주문번호`, `택배사코드(04)`, `송장번호`]
         - **스마트스토어 출력**: 주문 파일과 주문번호 매칭 → 송장번호 추가/갱신  
-          (결과 **시트명: 발송처리**, `택배사` 기본값=**롯데택배**)
+          (결과 **시트명: 발송처리**, `택배사` 기본값=**CJ대한통운**)
         - **쿠팡 출력**: 송장 주문번호(**P열 또는 헤더 자동탐색**) ↔ 쿠팡 C열(숫자만 비교) 일치 시 E열에 입력
         - **떠리몰 출력(키워드)**: 주문번호 매칭 후 송장번호 자동 기입
         """
@@ -855,14 +855,14 @@ def make_lao_invoice_df_fixed(lao_map: dict) -> pd.DataFrame:
         return pd.DataFrame(columns=LAO_FIXED_TEMPLATE_COLUMNS)
     orders = list(lao_map.keys())
     tracks = [lao_map[o] for o in orders]
-    return pd.DataFrame({"주문번호": orders, "택배사코드": ["08"] * len(orders), "송장번호": tracks}, columns=LAO_FIXED_TEMPLATE_COLUMNS)
+    return pd.DataFrame({"주문번호": orders, "택배사코드": ["04"] * len(orders), "송장번호": tracks}, columns=LAO_FIXED_TEMPLATE_COLUMNS)
 
 def make_ss_filled_df(ss_map: dict, ss_df: Optional[pd.DataFrame]) -> pd.DataFrame:
     if ss_df is None or ss_df.empty:
         if not ss_map:
             return pd.DataFrame()
         df = pd.DataFrame({"주문번호": list(ss_map.keys()), SS_TRACKING_COL_NAME: list(ss_map.values())})
-        df["택배사"] = "롯데택배"
+        df["택배사"] = "CJ대한통운"
         return df
     col_order = find_col(SS_ORDER_KEYS, ss_df)
     out = ss_df.copy()
@@ -873,11 +873,11 @@ def make_ss_filled_df(ss_map: dict, ss_df: Optional[pd.DataFrame]) -> pd.DataFra
     mapped = out[col_order].astype(str).map(ss_map).fillna("")
     out.loc[is_empty, SS_TRACKING_COL_NAME] = mapped[is_empty]
     if "택배사" not in out.columns:
-        out["택배사"] = "롯데택배"
+        out["택배사"] = "CJ대한통운"
     else:
         ser = out["택배사"].astype(str)
         empty_mask = ser.str.lower().eq("nan") | ser.str.strip().eq("")
-        out.loc[empty_mask, "택배사"] = "롯데택배"
+        out.loc[empty_mask, "택배사"] = "CJ대한통운"
     return out
 
 # --- (쿠팡) 송장파일에서 주문번호 매핑 생성: P열 우선, 없으면 헤더 자동탐색 ---
@@ -1034,11 +1034,11 @@ if run_invoice:
                 if ss_out_df is not None and not ss_out_df.empty:
                     ss_out_export = ss_out_df.copy()
                     if "택배사" not in ss_out_export.columns:
-                        ss_out_export["택배사"] = "롯데택배"
+                        ss_out_export["택배사"] = "CJ대한통운"
                     else:
                         ser = ss_out_export["택배사"].astype(str)
                         empty_mask = ser.str.lower().eq("nan") | ser.str.strip().eq("")
-                        ss_out_export.loc[empty_mask, "택배사"] = "롯데택배"
+                        ss_out_export.loc[empty_mask, "택배사"] = "CJ대한통운"
                     download_df(ss_out_export, "스마트스토어 송장 완성 다운로드", "스마트스토어 송장 완성", "ss_inv",
                                 sheet_name="발송처리", csv_sep_override=",", csv_encoding_override="cp949")
                 if cp_out_df is not None and not cp_out_df.empty:
