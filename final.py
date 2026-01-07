@@ -245,7 +245,7 @@ run_invoice = st.button("송장등록 실행")
 ORDER_KEYS_INVOICE = ["주문번호", "주문ID", "주문코드", "주문번호1", "고객주문번호"]
 TRACKING_KEYS = ["송장번호", "운송장번호", "운송장", "등기번호", "운송장 번호", "송장번호1"]
 
-SS_ORDER_KEYS = ["주문번호"]
+SS_ORDER_KEYS = ["상품주문번호", "주문번호"]
 SS_TRACKING_COL_NAME = "송장번호"
 TM_ORDER_KEYS = ["주문번호", "주문ID", "주문코드", "주문번호1"]
 
