@@ -245,7 +245,7 @@ run_invoice = st.button("송장등록 실행")
 ORDER_KEYS_INVOICE = ["주문번호", "주문ID", "주문코드", "주문번호1", "고객주문번호"]
 TRACKING_KEYS = ["송장번호", "운송장번호", "운송장", "등기번호", "운송장 번호", "송장번호1"]
 
-SS_ORDER_KEYS = ["주문번호"]
+SS_ORDER_KEYS = ["상품주문번호", "주문번호"]
 SS_TRACKING_COL_NAME = "송장번호"
 TM_ORDER_KEYS = ["주문번호", "주문ID", "주문코드", "주문번호1"]
 
@@ -264,10 +264,12 @@ def classify_orders(mapping: dict):
     lao, ss = {}, {}
     for o, t in mapping.items():
         s = str(o).strip()
+        digits = _digits_only(s)
         if "LO" in s.upper():
             lao[s] = t
-        elif len(_digits_only(s)) == 16:
-            ss[s] = t
+        elif len(digits) == 16:
+            # 스마트스토어: 숫자만 추출한 값으로 매핑 (주문번호 형식이 다양할 수 있으므로)
+            ss[digits] = t
     return lao, ss
 
 def make_lao_invoice_df_fixed(lao_map: dict) -> pd.DataFrame:
@@ -277,21 +279,54 @@ def make_lao_invoice_df_fixed(lao_map: dict) -> pd.DataFrame:
     tracks = [lao_map[o] for o in orders]
     return pd.DataFrame({"주문번호": orders, "택배사코드": ["04"] * len(orders), "송장번호": tracks}, columns=LAO_FIXED_TEMPLATE_COLUMNS)
 
-def make_ss_filled_df(ss_map: dict, ss_df: Optional[pd.DataFrame]) -> pd.DataFrame:
+def make_ss_filled_df(ss_map: dict, ss_df: Optional[pd.DataFrame], df_invoice: Optional[pd.DataFrame] = None) -> pd.DataFrame:
+    """
+    스마트스토어 파일에 송장번호 입력
+    ss_map: classify_orders에서 생성된 매핑 (16자리 숫자만 추출한 값)
+    df_invoice: 송장파일 (직접 매칭을 위해 사용)
+    """
     if ss_df is None or ss_df.empty:
         if not ss_map:
             return pd.DataFrame()
         df = pd.DataFrame({"주문번호": list(ss_map.keys()), SS_TRACKING_COL_NAME: list(ss_map.values())})
         df["택배사"] = "CJ대한통운"
         return df
+    
     col_order = find_col(SS_ORDER_KEYS, ss_df)
     out = ss_df.copy()
     if SS_TRACKING_COL_NAME not in out.columns:
         out[SS_TRACKING_COL_NAME] = ""
     existing = out[SS_TRACKING_COL_NAME].astype(str)
     is_empty = (existing.str.lower().eq("nan")) | (existing.str.strip().eq(""))
-    mapped = out[col_order].astype(str).map(ss_map).fillna("")
-    out.loc[is_empty, SS_TRACKING_COL_NAME] = mapped[is_empty]
+    
+    # 송장파일이 제공되면 직접 매칭: 고객주문번호(숫자만) = 상품주문번호(숫자만)
+    if df_invoice is not None and not df_invoice.empty:
+        try:
+            inv_order_col = find_col(ORDER_KEYS_INVOICE, df_invoice)
+            inv_tracking_col = find_col(TRACKING_KEYS, df_invoice)
+            # 송장파일에서 숫자만 추출한 주문번호로 매핑 생성
+            direct_map = {}
+            for i in range(len(df_invoice)):
+                inv_order = str(df_invoice.iloc[i][inv_order_col])
+                inv_order_digits = _digits_only(inv_order)
+                inv_track = str(df_invoice.iloc[i][inv_tracking_col])
+                if inv_order_digits and inv_track and str(inv_track).lower() != "nan":
+                    direct_map[inv_order_digits] = inv_track
+            
+            # 스마트스토어 파일의 상품주문번호에서 숫자만 추출하여 직접 매칭
+            ss_order_digits = out[col_order].astype(str).map(_digits_only)
+            mapped = ss_order_digits.map(direct_map).fillna("")
+            out.loc[is_empty, SS_TRACKING_COL_NAME] = mapped[is_empty]
+        except Exception:
+            # 직접 매칭 실패 시 기존 방식 사용
+            ss_order_digits = out[col_order].astype(str).map(_digits_only)
+            mapped = ss_order_digits.map(ss_map).fillna("")
+            out.loc[is_empty, SS_TRACKING_COL_NAME] = mapped[is_empty]
+    else:
+        # 기존 방식: ss_map 사용 (16자리 숫자만 추출한 값)
+        ss_order_digits = out[col_order].astype(str).map(_digits_only)
+        mapped = ss_order_digits.map(ss_map).fillna("")
+        out.loc[is_empty, SS_TRACKING_COL_NAME] = mapped[is_empty]
     if "택배사" not in out.columns:
         out["택배사"] = "CJ대한통운"
     else:
@@ -414,7 +449,7 @@ if run_invoice:
                 lao_map, ss_map = classify_orders(order_track_map)
 
                 lao_out_df = make_lao_invoice_df_fixed(lao_map)
-                ss_out_df = make_ss_filled_df(ss_map, df_ss_orders)
+                ss_out_df = make_ss_filled_df(ss_map, df_ss_orders, df_invoice)
                 cp_out_df = make_cp_filled_df_by_letters(df_invoice, df_cp_orders)
                 tm_out_df = make_tm_filled_df(df_tm_orders, order_track_map)
 
