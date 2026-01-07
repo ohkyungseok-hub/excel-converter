@@ -157,6 +157,29 @@ def _get_bytes(file) -> bytes:
         raise RuntimeError("업로드 파일 바이트를 읽을 수 없습니다.")
     return data
 
+def read_smartstore_with_password(file, password: str = "1234") -> pd.DataFrame:
+    """스마트스토어 파일: 암호 해제 후 첫 행 삭제하고 읽기"""
+    try:
+        import msoffcrypto
+    except ImportError:
+        raise RuntimeError("암호화된 파일을 읽으려면 msoffcrypto-tool이 필요합니다. pip install msoffcrypto-tool")
+    
+    data = _get_bytes(file)
+    
+    # 암호 해제
+    decrypted = io.BytesIO()
+    office_file = msoffcrypto.OfficeFile(io.BytesIO(data))
+    office_file.load_key(password=password)
+    office_file.decrypt(decrypted)
+    decrypted.seek(0)
+    
+    # 첫 행 삭제를 위해 header=0으로 읽고 skiprows=1로 첫 행 건너뛰기
+    df = pd.read_excel(
+        decrypted, sheet_name=0, header=0, skiprows=1, dtype=str, keep_default_na=False,
+        engine="openpyxl",
+    )
+    return df
+
 def _read_excel_any(file, header=0, dtype=str, keep_default_na=False) -> pd.DataFrame:
     name = (getattr(file, "name", "") or "").lower()
     data = _get_bytes(file)
@@ -192,7 +215,7 @@ def _read_excel_any(file, header=0, dtype=str, keep_default_na=False) -> pd.Data
 def _digits_only(x: str) -> str:
     return re.sub(r"\D+", "", str(x or ""))
 
-st.markdown("## 🚚 new 송장등록")
+st.markdown("## 🚚 송장등록")
 
 with st.expander("동작 요약", expanded=False):
     st.markdown(
@@ -341,8 +364,10 @@ def make_tm_filled_df(tm_df: Optional[pd.DataFrame], inv_map: dict) -> pd.DataFr
             out[tm_tracking_col] = ""
     keys = out[tm_order_col].astype(str)
     mapped = keys.map(inv_map)
+    # 떠리몰: 송장번호에서 하이픈 제거
+    mapped_no_hyphen = mapped.astype(str).str.replace("-", "", regex=False)
     mask = mapped.notna() & mapped.astype(str).str.len().gt(0)
-    out.loc[mask, tm_tracking_col] = mapped[mask]
+    out.loc[mask, tm_tracking_col] = mapped_no_hyphen[mask]
     return out
 
 if run_invoice:
@@ -362,7 +387,7 @@ if run_invoice:
 
         if ss_order_file:
             try:
-                df_ss_orders = read_first_sheet_source_as_text(ss_order_file)
+                df_ss_orders = read_smartstore_with_password(ss_order_file, password="1234")
             except Exception as e:
                 st.warning(f"스마트스토어 주문 파일을 읽는 중 오류: {e}")
                 df_ss_orders = None
